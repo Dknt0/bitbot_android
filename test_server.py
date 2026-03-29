@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mock robot server for testing BitbotCopilot Android app.
+Mock robot server for testing Bitbot Android app.
 
 Simulates the bitbot backend:
   - HTTP GET /monitor/stateslist
@@ -208,7 +208,7 @@ async def websocket_handler(request):
 # --- Main ---
 
 async def main():
-    parser = argparse.ArgumentParser(description="Mock robot server for BitbotCopilot testing")
+    parser = argparse.ArgumentParser(description="Mock robot server for Bitbot testing")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=12888)
     args = parser.parse_args()

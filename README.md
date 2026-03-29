@@ -1,8 +1,10 @@
-# BitbotCopilot Android
+# Bitbot Android
 
 Android remote control app for humanoid robots. Connects to a robot backend via WebSocket and provides a dual-joystick gamepad interface for real-time velocity control and policy switching.
 
 Based on the [bitbot_xbox](https://github.com/dknt0/bitbot_xbox) protocol.
+
+See also: [BitbotCopilot](https://github.com/ZzzzzzS/BitbotCopilot) (desktop Qt/C++ version)
 
 ## Features
 
@@ -99,7 +101,7 @@ Settings are persisted across app restarts.
 ### Project Structure
 
 ```
-app/src/main/java/com/bitbot/copilot/
+app/src/main/java/com/bitbot/
 ├── data/
 │   ├── model/          # ConnectionState, ControlEvent, RobotState
 │   ├── remote/         # WebSocket client, API, DTOs

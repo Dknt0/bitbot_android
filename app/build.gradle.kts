@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.bitbot.copilot"
+    namespace = "com.bitbot"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.bitbot.copilot"
+        applicationId = "com.bitbot"
         minSdk = 31
         targetSdk = 34
         versionCode = 1

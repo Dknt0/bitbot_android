@@ -1,7 +1,7 @@
-# BitbotCopilot Android - Project Context
+# Bitbot Android - Project Context
 
 ## Overview
-BitbotCopilot Android is a mobile app for controlling a humanoid robot via WebSocket. The protocol is based on **bitbot_xbox** (`/home/dknt/Project/bitbot_xbox`), NOT the desktop BitbotCopilot Qt/C++ app.
+Bitbot Android is a mobile app for controlling a humanoid robot via WebSocket. The protocol is based on **bitbot_xbox** (`/home/dknt/Project/bitbot_xbox`), NOT the desktop BitbotCopilot Qt/C++ app.
 
 ## Technology Stack
 - **Language:** Kotlin
@@ -19,8 +19,8 @@ BitbotCopilot Android is a mobile app for controlling a humanoid robot via WebSo
 ## Project Structure
 
 ```
-BitbotCopilot-Android/
-├── app/src/main/java/com/bitbot/copilot/
+Bitbot-Android/
+├── app/src/main/java/com/bitbot/
 │   ├── BitbotApp.kt
 │   ├── MainActivity.kt              # Landscape + immersive mode
 │   ├── di/
@@ -106,7 +106,7 @@ These limits are configurable via Settings (persisted in DataStore). Keys: `Velo
 ## Build & Install
 
 ```bash
-cd /home/dknt/Project/mobile/BitbotCopilot-Android
+cd /home/dknt/Project/mobile/Bitbot-Android
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```

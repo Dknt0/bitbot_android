@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BitbotCopilot"
+rootProject.name = "Bitbot"
 include(":app")
