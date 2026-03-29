@@ -1,0 +1,33 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Java/Kotlin compiled
+*.class
+*.jar
+
+# Gradle
+.gradle/
+build/
+*/build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Keystore (never commit signing keys)
+*.jks
+*.keystore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
