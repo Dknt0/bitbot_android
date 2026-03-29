@@ -2,7 +2,7 @@
 
 Android remote control app for humanoid robots. Connects to a robot backend via WebSocket and provides a dual-joystick gamepad interface for real-time velocity control and policy switching.
 
-Based on the [bitbot_xbox](https://github.com/AgiBot-Inc/bitbot_xbox) protocol.
+Based on the [bitbot_xbox](https://github.com/dknt0/bitbot_xbox) protocol.
 
 ## Features
 
@@ -49,14 +49,14 @@ Or build a release APK:
 
 ### 1. Connect to Robot
 
-On the home screen, enter the robot's IP address and port (default: `192.168.123.161:12888`), then tap **Connect**.
+On the home screen, enter the robot's IP address and port (default: `127.0.0.1:12888`), then tap **Connect**.
 
 ### 2. Control Panel
 
 The pilot screen shows a landscape gamepad layout:
 
 ```
-  ┌────────┐                                      ┌────────┐
+  ┌────────┐                                       ┌────────┐
   │        │   [PowerOn] [InitPose]                │        │
   │  Yaw   │   [ Start ] [  Run   ]                │  Move  │
   │        │   [Stand] [Walk] [Robust]             │        │
@@ -132,6 +132,11 @@ The app communicates with the robot backend using the bitbot_xbox WebSocket prot
 - **Message format:** Double-serialized JSON text frames
 - **Button events:** value `1` (fire) or `2` (toggle)
 - **Velocity events:** value is `Double.toBits()` (IEEE 754 int64 bitcast), sent at 100Hz
+
+## Authors
+
+- **Dknt** — [github.com/dknt0](https://github.com/dknt0)
+- **Claude Code** — [claude.ai/code](https://claude.ai/code)
 
 ## License
 

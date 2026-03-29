@@ -1,7 +1,7 @@
 package com.bitbot.copilot.util
 
 object Constants {
-    const val DEFAULT_HOST = "192.168.123.161"
+    const val DEFAULT_HOST = "127.0.0.1"
     const val DEFAULT_PORT = 12888
 
     object Preferences {

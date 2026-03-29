@@ -130,4 +130,4 @@ python3 test_server.py --port 12888
 ## Environment
 - **Android SDK:** `/usr/lib/android-sdk`
 - **Java:** OpenJDK 21
-- **Default robot host:** 192.168.123.161:12888
+- **Default robot host:** 127.0.0.1:12888
