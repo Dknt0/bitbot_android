@@ -15,6 +15,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.bitbot.copilot.util.Constants.PolicyMode
+import com.bitbot.copilot.util.Constants.VelocityPrefs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,24 +91,21 @@ fun SettingsScreen(
 
             // Velocity Limits
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text("Velocity Limits", style = MaterialTheme.typography.titleMedium)
-                    Text("Max velocity per axis. Changes take effect on next connect.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Positive/negative limits per axis. Joystick center = zero velocity.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                    PolicyVelGroup("Standing", PolicyMode.STANDING,
-                        uiState.standingVelX, viewModel::updateStandingVelX,
-                        uiState.standingVelY, viewModel::updateStandingVelY,
-                        uiState.standingVelYaw, viewModel::updateStandingVelYaw)
-
-                    PolicyVelGroup("Walking", PolicyMode.WALKING,
-                        uiState.walkingVelX, viewModel::updateWalkingVelX,
-                        uiState.walkingVelY, viewModel::updateWalkingVelY,
-                        uiState.walkingVelYaw, viewModel::updateWalkingVelYaw)
-
-                    PolicyVelGroup("Robust", PolicyMode.ROBUST,
-                        uiState.robustVelX, viewModel::updateRobustVelX,
-                        uiState.robustVelY, viewModel::updateRobustVelY,
-                        uiState.robustVelYaw, viewModel::updateRobustVelYaw)
+                    for (mode in PolicyMode.entries) {
+                        PolicyVelGroup(
+                            mode = mode,
+                            velConfig = uiState.velConfig,
+                            onUpdate = viewModel::updateVelocity
+                        )
+                    }
                 }
             }
 
@@ -137,30 +135,89 @@ fun SettingsScreen(
 
 @Composable
 private fun PolicyVelGroup(
-    label: String,
     mode: PolicyMode,
-    velX: Double, onUpdateX: (Double) -> Unit,
-    velY: Double, onUpdateY: (Double) -> Unit,
-    velYaw: Double, onUpdateYaw: (Double) -> Unit
+    velConfig: Map<String, Double>,
+    onUpdate: (String, Double) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("$label (defaults: ${mode.defaultVelX}, ${mode.defaultVelY}, ${mode.defaultVelYaw})", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                Triple("Vel X", velX, onUpdateX),
-                Triple("Vel Y", velY, onUpdateY),
-                Triple("Vel Yaw", velYaw, onUpdateYaw)
-            ).forEach { (fieldLabel, value, onUpdate) ->
-                OutlinedTextField(
-                    value = "%.2f".format(value),
-                    onValueChange = { text -> text.toDoubleOrNull()?.let(onUpdate) },
-                    label = { Text(fieldLabel, fontSize = MaterialTheme.typography.labelSmall.fontSize) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace)
-                )
-            }
-        }
+    val keys = mode.prefKeys
+    val color = when (mode) {
+        PolicyMode.STANDING -> MaterialTheme.colorScheme.primary
+        PolicyMode.WALKING -> MaterialTheme.colorScheme.tertiary
+        PolicyMode.ROBUST -> MaterialTheme.colorScheme.secondary
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "${mode.label}  (defaults: x[${mode.defaultVelXNeg}, ${mode.defaultVelXPos}]  y[${mode.defaultVelYNeg}, ${mode.defaultVelYPos}]  yaw[${mode.defaultVelYawNeg}, ${mode.defaultVelYawPos}])",
+            style = MaterialTheme.typography.titleSmall,
+            color = color
+        )
+
+        // Vel X
+        AxisRow(
+            label = "X",
+            posValue = velConfig[keys.xPos] ?: mode.defaultVelXPos,
+            negValue = velConfig[keys.xNeg] ?: mode.defaultVelXNeg,
+            onPosUpdate = { onUpdate(keys.xPos, it) },
+            onNegUpdate = { onUpdate(keys.xNeg, it) }
+        )
+
+        // Vel Y
+        AxisRow(
+            label = "Y",
+            posValue = velConfig[keys.yPos] ?: mode.defaultVelYPos,
+            negValue = velConfig[keys.yNeg] ?: mode.defaultVelYNeg,
+            onPosUpdate = { onUpdate(keys.yPos, it) },
+            onNegUpdate = { onUpdate(keys.yNeg, it) }
+        )
+
+        // Vel Yaw
+        AxisRow(
+            label = "Yaw",
+            posValue = velConfig[keys.yawPos] ?: mode.defaultVelYawPos,
+            negValue = velConfig[keys.yawNeg] ?: mode.defaultVelYawNeg,
+            onPosUpdate = { onUpdate(keys.yawPos, it) },
+            onNegUpdate = { onUpdate(keys.yawNeg, it) }
+        )
+    }
+}
+
+@Composable
+private fun AxisRow(
+    label: String,
+    posValue: Double,
+    negValue: Double,
+    onPosUpdate: (Double) -> Unit,
+    onNegUpdate: (Double) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.width(36.dp),
+            style = MaterialTheme.typography.labelMedium,
+            fontFamily = FontFamily.Monospace
+        )
+        OutlinedTextField(
+            value = "%.2f".format(posValue),
+            onValueChange = { text -> text.toDoubleOrNull()?.let(onPosUpdate) },
+            label = { Text("+", fontSize = MaterialTheme.typography.labelSmall.fontSize) },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace)
+        )
+        OutlinedTextField(
+            value = "%.2f".format(negValue),
+            onValueChange = { text -> text.toDoubleOrNull()?.let(onNegUpdate) },
+            label = { Text("-", fontSize = MaterialTheme.typography.labelSmall.fontSize) },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace)
+        )
     }
 }

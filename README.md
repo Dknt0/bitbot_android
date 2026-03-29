@@ -1,0 +1,138 @@
+# BitbotCopilot Android
+
+Android remote control app for humanoid robots. Connects to a robot backend via WebSocket and provides a dual-joystick gamepad interface for real-time velocity control and policy switching.
+
+Based on the [bitbot_xbox](https://github.com/AgiBot-Inc/bitbot_xbox) protocol.
+
+## Features
+
+- **Dual virtual joysticks** — left joystick for yaw, right joystick for linear movement (x/y)
+- **Policy mode switching** — Standing, Walking, Robust with configurable velocity limits
+- **Action buttons** — Power On, Init Pose, Start State Machine, Run Policy
+- **Emergency stop** — large E-STOP button with physical separation from other controls
+- **Configurable velocity limits** — separate positive/negative limits per axis per policy mode
+- **Debug overlay** — real-time velocity readout for operator monitoring
+- **Landscape immersive mode** — full-screen control panel with no system UI distractions
+
+## Screenshots
+
+| Home Screen | Pilot Screen | Settings |
+|---|---|---|
+| *Connection UI* | *Gamepad control panel* | *Velocity config* |
+
+## Requirements
+
+- Android 12 (API 31) or later
+- A robot running a WebSocket server compatible with the bitbot_xbox protocol on port 12888
+
+## Build
+
+```bash
+./gradlew assembleDebug
+```
+
+The debug APK is output to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Install
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Or build a release APK:
+
+```bash
+./gradlew assembleRelease
+```
+
+## Usage
+
+### 1. Connect to Robot
+
+On the home screen, enter the robot's IP address and port (default: `192.168.123.161:12888`), then tap **Connect**.
+
+### 2. Control Panel
+
+The pilot screen shows a landscape gamepad layout:
+
+```
+  ┌────────┐                                      ┌────────┐
+  │        │   [PowerOn] [InitPose]                │        │
+  │  Yaw   │   [ Start ] [  Run   ]                │  Move  │
+  │        │   [Stand] [Walk] [Robust]             │        │
+  └────────┘                                       └────────┘
+                          [ E-STOP ]
+```
+
+- **Left joystick (Yaw)** — controls rotation velocity
+- **Right joystick (Move)** — controls forward/backward (Y axis) and lateral (X axis) velocity
+- **Power On** — enables record mode and powers on the robot
+- **Init Pose** — moves the robot to initial standing pose
+- **Start** — starts the state machine (toggle)
+- **Run** — starts policy inference
+- **Stand / Walk / Robust** — switch between policy modes
+- **E-STOP** — emergency stop (sends `stop` event)
+
+### 3. Configure Velocity Limits
+
+Go to **Settings** to configure maximum velocity per axis per policy mode. Each axis has separate positive (`+`) and negative (`-`) limits:
+
+| Mode | vel_x [neg, pos] | vel_y [neg, pos] | vel_yaw [neg, pos] |
+|---|---|---|---|
+| Standing | [-1, 4] | [-1, 1] | [-3, 3] |
+| Walking | [0, 0.6] | [0, 0] | [-1, 1] |
+| Robust | [0, 1.5] | [0, 0] | [-0.6, 0.6] |
+
+When a negative limit is set to 0, the corresponding joystick direction is disabled. For example, Walking mode has vel_x range [0, 0.6] — pushing the joystick backward still sends zero velocity.
+
+Settings are persisted across app restarts.
+
+## Development
+
+### Tech Stack
+
+- Kotlin + Jetpack Compose (Material 3)
+- OkHttp WebSocket
+- Hilt dependency injection
+- MVVM architecture with DataStore preferences
+
+### Project Structure
+
+```
+app/src/main/java/com/bitbot/copilot/
+├── data/
+│   ├── model/          # ConnectionState, ControlEvent, RobotState
+│   ├── remote/         # WebSocket client, API, DTOs
+│   └── repository/     # RobotRepository
+├── di/                 # Hilt modules (AppModule, NetworkModule)
+├── domain/             # Repository interfaces, use cases
+├── ui/
+│   ├── navigation/     # NavGraph
+│   ├── screens/
+│   │   ├── home/       # Connection screen
+│   │   ├── pilot/      # Control panel + virtual joystick
+│   │   └── settings/   # Settings screen
+│   └── theme/          # Material 3 theme
+└── util/               # Constants, Extensions
+```
+
+### Mock Server
+
+A Python mock server is included for testing without a real robot:
+
+```bash
+python3 test_server.py --port 12888
+```
+
+## Protocol
+
+The app communicates with the robot backend using the bitbot_xbox WebSocket protocol:
+
+- **Endpoint:** `ws://<host>:<port>/console`
+- **Message format:** Double-serialized JSON text frames
+- **Button events:** value `1` (fire) or `2` (toggle)
+- **Velocity events:** value is `Double.toBits()` (IEEE 754 int64 bitcast), sent at 100Hz
+
+## License
+
+MIT

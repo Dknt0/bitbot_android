@@ -11,7 +11,6 @@ import com.bitbot.copilot.util.Constants
 import com.bitbot.copilot.util.Constants.ButtonValue
 import com.bitbot.copilot.util.Constants.Events
 import com.bitbot.copilot.util.Constants.PolicyMode
-import com.bitbot.copilot.util.Constants.VelocityPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,7 +30,10 @@ data class PilotUiState(
     val rightJoystickX: Float = 0f,
     val rightJoystickY: Float = 0f,
     val policyMode: PolicyMode = PolicyMode.STANDING,
-    val isPolicyRunning: Boolean = false
+    val isPolicyRunning: Boolean = false,
+    val velX: Double = 0.0,
+    val velY: Double = 0.0,
+    val velW: Double = 0.0
 )
 
 @HiltViewModel
@@ -49,9 +51,12 @@ class PilotViewModel @Inject constructor(
     private var velocityJob: Job? = null
 
     // Cached velocity config from DataStore
-    private var velXMax: Double = PolicyMode.STANDING.defaultVelX
-    private var velYMax: Double = PolicyMode.STANDING.defaultVelY
-    private var velYawMax: Double = PolicyMode.STANDING.defaultVelYaw
+    private var velXPos: Double = PolicyMode.STANDING.defaultVelXPos
+    private var velXNeg: Double = PolicyMode.STANDING.defaultVelXNeg
+    private var velYPos: Double = PolicyMode.STANDING.defaultVelYPos
+    private var velYNeg: Double = PolicyMode.STANDING.defaultVelYNeg
+    private var velYawPos: Double = PolicyMode.STANDING.defaultVelYawPos
+    private var velYawNeg: Double = PolicyMode.STANDING.defaultVelYawNeg
 
     init {
         loadVelocityConfig()
@@ -60,22 +65,20 @@ class PilotViewModel @Inject constructor(
 
     private fun loadVelocityConfig() {
         viewModelScope.launch {
-            val mode = _uiState.value.policyMode
-            refreshVelocityConfig(mode)
+            refreshVelocityConfig(_uiState.value.policyMode)
         }
     }
 
     private fun refreshVelocityConfig(mode: PolicyMode) {
         viewModelScope.launch {
             val prefs = dataStore.data.first()
-            val (xKey, yKey, yawKey) = when (mode) {
-                PolicyMode.STANDING -> Triple(VelocityPrefs.STANDING_X, VelocityPrefs.STANDING_Y, VelocityPrefs.STANDING_YAW)
-                PolicyMode.WALKING -> Triple(VelocityPrefs.WALKING_X, VelocityPrefs.WALKING_Y, VelocityPrefs.WALKING_YAW)
-                PolicyMode.ROBUST -> Triple(VelocityPrefs.ROBUST_X, VelocityPrefs.ROBUST_Y, VelocityPrefs.ROBUST_YAW)
-            }
-            velXMax = prefs[doublePreferencesKey(xKey)] ?: mode.defaultVelX
-            velYMax = prefs[doublePreferencesKey(yKey)] ?: mode.defaultVelY
-            velYawMax = prefs[doublePreferencesKey(yawKey)] ?: mode.defaultVelYaw
+            val keys = mode.prefKeys
+            velXPos = prefs[doublePreferencesKey(keys.xPos)] ?: mode.defaultVelXPos
+            velXNeg = prefs[doublePreferencesKey(keys.xNeg)] ?: mode.defaultVelXNeg
+            velYPos = prefs[doublePreferencesKey(keys.yPos)] ?: mode.defaultVelYPos
+            velYNeg = prefs[doublePreferencesKey(keys.yNeg)] ?: mode.defaultVelYNeg
+            velYawPos = prefs[doublePreferencesKey(keys.yawPos)] ?: mode.defaultVelYawPos
+            velYawNeg = prefs[doublePreferencesKey(keys.yawNeg)] ?: mode.defaultVelYawNeg
         }
     }
 
@@ -85,9 +88,11 @@ class PilotViewModel @Inject constructor(
             while (isActive) {
                 val state = _uiState.value
 
-                val velX = Constants.scaleVelocity(-state.rightJoystickY, velXMax)
-                val velY = Constants.scaleVelocity(-state.rightJoystickX, velYMax)
-                val velW = Constants.scaleVelocity(-state.leftJoystickX, velYawMax)
+                val velX = Constants.scaleVelocity(-state.rightJoystickY, velXPos, velXNeg)
+                val velY = Constants.scaleVelocity(-state.rightJoystickX, velYPos, velYNeg)
+                val velW = Constants.scaleVelocity(-state.leftJoystickX, velYawPos, velYawNeg)
+
+                _uiState.value = state.copy(velX = velX, velY = velY, velW = velW)
 
                 repository.sendVelocityEvents(listOf(
                     Events.SET_VEL_X to velX,
@@ -115,7 +120,7 @@ class PilotViewModel @Inject constructor(
     }
 
     fun onPressB() {
-        repository.sendButtonEvent(Events.START, ButtonValue.FIRE)
+        repository.sendButtonEvent(Events.START, ButtonValue.TOGGLE)
     }
 
     fun onPressX() {
@@ -144,12 +149,6 @@ class PilotViewModel @Inject constructor(
     fun onRightTrigger(value: Float) {
         if (value > 0.9f) {
             repository.sendButtonEvent(Events.STOP, ButtonValue.FIRE)
-        }
-    }
-
-    fun onLeftTrigger(value: Float) {
-        if (value > 0.9f) {
-            repository.sendButtonEvent(Events.NAV_TRIGGER, ButtonValue.FIRE)
         }
     }
 

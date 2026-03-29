@@ -81,7 +81,7 @@ BitbotCopilot-Android/
 | Gamepad | Event | Value |
 |---|---|---|
 | A | `init_pose` | Fire (1) |
-| B | `start` | Fire (1) |
+| B | `start` | Toggle (2) |
 | X | `enable_standing_policy` | Fire (1) |
 | Y | `enable_record` + `power_on` | Fire (1) |
 | LB | `enable_warking_policy` | Fire (1) |
@@ -93,11 +93,15 @@ BitbotCopilot-Android/
 | -Left X | `set_vel_w` | Velocity |
 
 ### Velocity Scaling by Policy Mode
-| Mode | vel_x | vel_y | vel_yaw |
+Separate positive/negative limits per axis. Joystick center = 0 velocity.
+Positive input scales to `posLimit`, negative input scales to `negLimit` magnitude.
+| Mode | vel_x [neg, pos] | vel_y [neg, pos] | vel_yaw [neg, pos] |
 |---|---|---|---|
 | Standing | [-1, 4] | [-1, 1] | [-3, 3] |
 | Walking | [0, 0.6] | [0, 0] | [-1, 1] |
 | Robust | [0, 1.5] | [0, 0] | [-0.6, 0.6] |
+
+These limits are configurable via Settings (persisted in DataStore). Keys: `VelocityPrefs.{mode}_{axis}_{pos/neg}`.
 
 ## Build & Install
 
@@ -117,6 +121,11 @@ python3 test_server.py --port 12888
 - Layout values (size, maxDragPx) are **state variables** read dynamically inside pointerInput — NOT captured as immutable vals
 - Connection retry: `WebSocketClient.disconnect()` clears `webSocket=null, currentUrl=null` so reconnect works after failure
 - `onFailure`/`onClosing`/`onClosed` all reset state to allow fresh connections
+- **PilotScreen layout**: Landscape gamepad — left Yaw joystick, center button panel (2x2 actions + 3 policy chips + E-STOP), right Move joystick
+- **Velocity config**: 18 DataStore keys (3 policies × 3 axes × pos/neg), `SettingsUiState.velConfig` is a `Map<String, Double>`, `PilotViewModel` caches 6 values per active policy mode
+- **scaleVelocity**: `scaleVelocity(input, posLimit, negLimit)` — input > 0 → input × posLimit, input < 0 → input × negLimit, input == 0 → 0.0. Guards against -0.0 via `if (result == 0.0) 0.0`.
+- **Computed velocities** in `PilotUiState` (`velX`, `velY`, `velW`) updated every 100Hz tick, used by debug panel
+- **Start button** uses `TOGGLE` (value 2), all other buttons use `FIRE` (value 1)
 
 ## Environment
 - **Android SDK:** `/usr/lib/android-sdk`
