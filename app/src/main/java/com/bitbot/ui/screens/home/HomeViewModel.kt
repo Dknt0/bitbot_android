@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -42,19 +43,24 @@ class HomeViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ConnectionState.Disconnected)
 
     init {
-        loadSettings()
-    }
+        // Observe DataStore changes as a Flow — auto-updates when settings change
+        viewModelScope.launch {
+            dataStore.data.collect { prefs ->
+                val newHost = prefs[HOST_KEY] ?: Constants.DEFAULT_HOST
+                val newPort = prefs[PORT_KEY] ?: Constants.DEFAULT_PORT
+                val newAutoConnect = prefs[AUTO_CONNECT_KEY] ?: false
+                _uiState.value = _uiState.value.copy(
+                    host = newHost,
+                    port = newPort,
+                    autoConnect = newAutoConnect
+                )
+            }
+        }
 
-    private fun loadSettings() {
+        // Auto-connect on first load
         viewModelScope.launch {
             val prefs = dataStore.data.first()
-            _uiState.value = _uiState.value.copy(
-                host = prefs[HOST_KEY] ?: Constants.DEFAULT_HOST,
-                port = prefs[PORT_KEY] ?: Constants.DEFAULT_PORT,
-                autoConnect = prefs[AUTO_CONNECT_KEY] ?: false
-            )
-
-            if (_uiState.value.autoConnect) {
+            if (prefs[AUTO_CONNECT_KEY] ?: false) {
                 connect()
             }
         }

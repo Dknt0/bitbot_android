@@ -1,5 +1,11 @@
 package com.bitbot.ui.screens.pilot
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -11,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
@@ -29,24 +36,68 @@ fun PilotScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    var userDisconnecting by remember { mutableStateOf(false) }
 
-    if (connectionState !is ConnectionState.Connected) {
+    // Suppress overlay during explicit disconnect to avoid flash before navigation
+    if (connectionState !is ConnectionState.Connected && !userDisconnecting) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(
-                    Icons.Default.LinkOff,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.error
-                )
-                Text("Not Connected", style = MaterialTheme.typography.titleLarge)
-                Button(onClick = onNavigateBack) { Text("Go Back") }
+                when (connectionState) {
+                    is ConnectionState.Connecting, is ConnectionState.Error -> {
+                        val errorMsg = (connectionState as? ConnectionState.Error)?.message
+                        val transition = rememberInfiniteTransition(label = "spin")
+                        val rotation by transition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1000, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "rotation"
+                        )
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp).rotate(rotation),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Connection Lost", style = MaterialTheme.typography.titleLarge)
+                        if (errorMsg != null) {
+                            Text(
+                                errorMsg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 2
+                            )
+                        }
+                        Text(
+                            "Retrying...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    else -> { // Disconnected — explicit user action
+                        Icon(
+                            Icons.Default.LinkOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Text("Not Connected", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+                // Always show Go Back button when not connected
+                Button(onClick = { viewModel.disconnect(); onNavigateBack() }) {
+                    Text("Go Back")
+                }
             }
         }
         return
@@ -67,7 +118,7 @@ fun PilotScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = { viewModel.disconnect(); onNavigateBack() },
+                onClick = { userDisconnecting = true; viewModel.disconnect(); onNavigateBack() },
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(Icons.Default.ArrowBack, "Back", modifier = Modifier.size(18.dp))

@@ -20,6 +20,7 @@ import com.bitbot.data.model.ConnectionState
 @Composable
 fun HomeScreen(
     onNavigateToPilot: () -> Unit,
+    onNavigateToData: () -> Unit,
     onNavigateToSettings: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
@@ -28,7 +29,7 @@ fun HomeScreen(
 
     LaunchedEffect(connectionState) {
         if (connectionState is ConnectionState.Connected) {
-            // Optionally auto-navigate to pilot screen
+            // Optionally auto-navigate to panels
         }
     }
 
@@ -192,17 +193,32 @@ fun HomeScreen(
                 }
             }
 
-            // Pilot Control Button
+            // Control + Data buttons
             if (connectionState is ConnectionState.Connected) {
-                Button(
-                    onClick = onNavigateToPilot,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.SettingsRemote, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Open Pilot Controls", style = MaterialTheme.typography.titleMedium)
+                    Button(
+                        onClick = onNavigateToPilot,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                    ) {
+                        Icon(Icons.Default.SportsEsports, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Pilot Controls", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Button(
+                        onClick = onNavigateToData,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                    ) {
+                        Icon(Icons.Default.Dashboard, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Data View", style = MaterialTheme.typography.titleMedium)
+                    }
                 }
             }
         }

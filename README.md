@@ -1,6 +1,6 @@
 # Bitbot Android
 
-Android remote control app for humanoid robots. Connects to a robot backend via WebSocket and provides a dual-joystick gamepad interface for real-time velocity control and policy switching.
+Android remote control app for humanoid robots. Connects to a robot backend via WebSocket and HTTP, providing a dual-joystick gamepad interface for real-time velocity control and a realtime data monitoring panel.
 
 Based on the [bitbot_xbox](https://github.com/dknt0/bitbot_xbox) protocol.
 
@@ -12,15 +12,18 @@ See also: [BitbotCopilot](https://github.com/ZzzzzzS/BitbotCopilot) (desktop Qt/
 - **Policy mode switching** — Standing, Walking, Robust with configurable velocity limits
 - **Action buttons** — Power On, Init Pose, Start State Machine, Run Policy
 - **Emergency stop** — large E-STOP button with physical separation from other controls
+- **Realtime data panel** — live telemetry table with kernel stats, device data grouped by type, and state name lookup
+- **Panel switcher** — tap-to-toggle FAB to switch between Pilot and Data panels
 - **Configurable velocity limits** — separate positive/negative limits per axis per policy mode
 - **Debug overlay** — real-time velocity readout for operator monitoring
+- **Auto-reconnect** — automatically reconnects when connection drops
 - **Landscape immersive mode** — full-screen control panel with no system UI distractions
 
 ## Screenshots
 
-| Home Screen | Pilot Screen | Settings |
+| Home Screen | Pilot Panel | Data Panel |
 |---|---|---|
-| *Connection UI* | *Gamepad control panel* | *Velocity config* |
+| *Connection UI* | *Gamepad control panel* | *Realtime telemetry table* |
 
 ## Requirements
 
@@ -53,7 +56,7 @@ Or build a release APK:
 
 On the home screen, enter the robot's IP address and port (default: `127.0.0.1:12888`), then tap **Connect**.
 
-### 2. Control Panel
+### 2. Control Panel (Pilot)
 
 The pilot screen shows a landscape gamepad layout:
 
@@ -75,7 +78,17 @@ The pilot screen shows a landscape gamepad layout:
 - **Stand / Walk / Robust** — switch between policy modes
 - **E-STOP** — emergency stop (sends `stop` event)
 
-### 3. Configure Velocity Limits
+### 3. Data Panel
+
+Switch to the Data panel via the floating panel switcher (bottom-left corner). Shows:
+
+- **Kernel stats bar** — period, state, process time, kernel time, CPU usage
+- **Tabbed device table** — devices grouped by type (e.g., MujocoJoint), with sticky column headers
+- **State names** — robot state IDs mapped to human-readable names
+
+Data is polled at 10Hz via `request_data` WebSocket messages (only when the data panel is active).
+
+### 4. Configure Velocity Limits
 
 Go to **Settings** to configure maximum velocity per axis per policy mode. Each axis has separate positive (`+`) and negative (`-`) limits:
 
@@ -85,16 +98,14 @@ Go to **Settings** to configure maximum velocity per axis per policy mode. Each 
 | Walking | [0, 0.6] | [0, 0] | [-1, 1] |
 | Robust | [0, 1.5] | [0, 0] | [-0.6, 0.6] |
 
-When a negative limit is set to 0, the corresponding joystick direction is disabled. For example, Walking mode has vel_x range [0, 0.6] — pushing the joystick backward still sends zero velocity.
-
-Settings are persisted across app restarts.
+When a negative limit is set to 0, the corresponding joystick direction is disabled. Settings are persisted across app restarts.
 
 ## Development
 
 ### Tech Stack
 
 - Kotlin + Jetpack Compose (Material 3)
-- OkHttp WebSocket
+- OkHttp (HTTP + WebSocket)
 - Hilt dependency injection
 - MVVM architecture with DataStore preferences
 
@@ -102,38 +113,56 @@ Settings are persisted across app restarts.
 
 ```
 app/src/main/java/com/bitbot/
+├── BitbotApp.kt
+├── MainActivity.kt              # Landscape + immersive mode
+├── di/
+│   ├── AppModule.kt             # DataStore provider
+│   └── NetworkModule.kt         # OkHttp, Json, RobotApi providers
 ├── data/
-│   ├── model/          # ConnectionState, ControlEvent, RobotState
-│   ├── remote/         # WebSocket client, API, DTOs
-│   └── repository/     # RobotRepository
-├── di/                 # Hilt modules (AppModule, NetworkModule)
-├── domain/             # Repository interfaces, use cases
+│   ├── model/
+│   │   ├── ConnectionState.kt
+│   │   ├── ControlEvent.kt
+│   │   └── RobotState.kt
+│   ├── remote/
+│   │   ├── api/RobotApi.kt      # HTTP endpoints
+│   │   ├── websocket/WebSocketClient.kt  # WS + monitor_data parsing + polling
+│   │   └── dto/
+│   └── repository/RobotRepository.kt
+├── domain/
+│   ├── RepositoryInterfaces.kt
+│   └── usecase/
 ├── ui/
-│   ├── navigation/     # NavGraph
+│   ├── navigation/NavGraph.kt
+│   ├── components/
+│   │   └── PanelSwitcher.kt     # Floating panel switch FAB
 │   ├── screens/
-│   │   ├── home/       # Connection screen
-│   │   ├── pilot/      # Control panel + virtual joystick
-│   │   └── settings/   # Settings screen
-│   └── theme/          # Material 3 theme
-└── util/               # Constants, Extensions
-```
-
-### Mock Server
-
-A Python mock server is included for testing without a real robot:
-
-```bash
-python3 test_server.py --port 12888
+│   │   ├── home/                # Connection UI (IP/port)
+│   │   ├── PanelHostScreen.kt   # Hosts Pilot or Data with switcher overlay
+│   │   ├── pilot/               # Control panel (joysticks + buttons)
+│   │   │   ├── PilotScreen.kt
+│   │   │   ├── PilotViewModel.kt
+│   │   │   └── components/
+│   │   │       └── VirtualGamepad.kt
+│   │   ├── data/                # Realtime data monitoring
+│   │   │   ├── DataScreen.kt
+│   │   │   └── DataViewModel.kt
+│   │   └── settings/
+│   └── theme/
+└── util/
+    ├── Constants.kt
+    └── Extensions.kt
 ```
 
 ## Protocol
 
 The app communicates with the robot backend using the bitbot_xbox WebSocket protocol:
 
-- **Endpoint:** `ws://<host>:<port>/console`
+- **WebSocket endpoint:** `ws://<host>:<port>/console`
+- **HTTP endpoints:** `/monitor/headers`, `/monitor/stateslist`, `/setting/control/get`
 - **Message format:** Double-serialized JSON text frames
 - **Button events:** value `1` (fire) or `2` (toggle)
-- **Velocity events:** value is `Double.toBits()` (IEEE 754 int64 bitcast), sent at 100Hz
+- **Velocity events:** value is `Double.toBits()` (int64 bitcast of double), sent at 100Hz
+- **Data polling:** `request_data` sent at 10Hz, response is `monitor_data` with flat double array
 
 ## Authors
 

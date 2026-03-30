@@ -32,28 +32,33 @@ Bitbot-Android/
 │   │   │   ├── ControlEvent.kt
 │   │   │   └── RobotState.kt
 │   │   ├── remote/
-│   │   │   ├── api/RobotApi.kt
-│   │   │   ├── websocket/WebSocketClient.kt
-│   │   │   └── dto/
+│   │   │   ├── api/RobotApi.kt      # HTTP: headers, stateslist, control mappings
+│   │   │   ├── websocket/WebSocketClient.kt  # WS + monitor_data parsing + polling
+│   │   │   └── dto/                 # HeadersResponseDto, DeviceHeadersDto, etc.
 │   │   └── repository/RobotRepository.kt
 │   ├── domain/
 │   │   ├── RepositoryInterfaces.kt
 │   │   └── usecase/
 │   ├── ui/
-│   │   ├── navigation/NavGraph.kt
+│   │   ├── navigation/NavGraph.kt   # Routes: home, panel_host/{initialPanel}
+│   │   ├── components/
+│   │   │   └── PanelSwitcher.kt     # Floating FAB to switch Pilot ↔ Data
 │   │   ├── screens/
 │   │   │   ├── home/                # Connection UI (IP/port)
+│   │   │   ├── PanelHostScreen.kt   # Hosts Pilot or Data with PanelSwitcher overlay
 │   │   │   ├── pilot/               # Control panel (joysticks + buttons)
 │   │   │   │   ├── PilotScreen.kt
 │   │   │   │   ├── PilotViewModel.kt
 │   │   │   │   └── components/
 │   │   │   │       └── VirtualGamepad.kt   # Joystick with raw pointer tracking
+│   │   │   ├── data/                # Realtime data monitoring panel
+│   │   │   │   ├── DataScreen.kt    # Kernel stats bar + tabbed device table
+│   │   │   │   └── DataViewModel.kt # Fetches headers, polls monitor_data, parses rows
 │   │   │   └── settings/
 │   │   └── theme/
 │   └── util/
 │       ├── Constants.kt             # Event names, PolicyMode, velocity scaling
 │       └── Extensions.kt            # normalizeJoystickValue (deadzone)
-├── test_server.py                   # Mock robot server for testing
 ├── build.gradle.kts
 └── gradle/
 ```
@@ -76,6 +81,13 @@ Bitbot-Android/
 ### Velocity Events: value is `Double.toBits()` (int64 bitcast)
 - `set_vel_x`, `set_vel_y`, `set_vel_w` — sent at 100Hz
 - **Important:** `-(0.0f)` produces `-0.0f` which encodes as `Long.MIN_VALUE`. `scaleVelocity()` returns `0.0` explicitly when input is zero.
+
+### Monitor Data (Robot → App)
+- **Polling:** App sends `{"type":"request_data","data":""}` at 10Hz (only when Data panel is active)
+- **Response:** `{"type":"monitor_data","data":"{\"data\":[N,N,...]}"}`  — double-serialized JSON with flat double array
+- **Data layout:** kernel values first, then all device headers sequentially, then extra values
+- **Headers** fetched via HTTP `GET /monitor/headers` — returns `HeadersResponseDto { kernel, bus { devices [{ name, type, headers }] }, extra }`
+- **State names** from HTTP `GET /monitor/stateslist` — maps state IDs to human-readable names
 
 ### Gamepad → Event Mapping (from bitbot_frontend.hpp)
 | Gamepad | Event | Value |
@@ -111,11 +123,6 @@ cd /home/dknt/Project/mobile/Bitbot-Android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Testing
-```bash
-python3 test_server.py --port 12888
-```
-
 ## Key Implementation Notes
 - **VirtualJoystick** uses `awaitEachGesture` + raw `awaitPointerEvent` (no touch slop)
 - Layout values (size, maxDragPx) are **state variables** read dynamically inside pointerInput — NOT captured as immutable vals
@@ -126,6 +133,13 @@ python3 test_server.py --port 12888
 - **scaleVelocity**: `scaleVelocity(input, posLimit, negLimit)` — input > 0 → input × posLimit, input < 0 → input × negLimit, input == 0 → 0.0. Guards against -0.0 via `if (result == 0.0) 0.0`.
 - **Computed velocities** in `PilotUiState` (`velX`, `velY`, `velW`) updated every 100Hz tick, used by debug panel
 - **Start button** uses `TOGGLE` (value 2), all other buttons use `FIRE` (value 1)
+- **Data panel** fetches headers via HTTP (`/monitor/headers`) and polls `request_data` at 10Hz only when active. `startDataPolling()`/`stopDataPolling()` called from `DataViewModel` init/onCleared. Connection state observer retries polling on reconnect.
+- **PanelSwitcher**: Tap-to-toggle FAB at bottom-left, switches between Pilot and Data panels. Uses `AnimatedVisibility` with horizontal slide.
+- **PanelHostScreen**: Wraps PilotScreen and DataScreen as switchable composables. Route: `panel_host/{initialPanel}`.
+- **Data table**: LazyColumn with stickyHeader, fixed column widths (Name=110dp, Values=64dp, Mode=28dp), shared horizontal ScrollState for sync scrolling. Kernel stats bar shows deduplicated labels in top bar.
+- **HomeViewModel** observes DataStore as a `Flow` (not `.first()`) so settings changes from Settings screen are reflected immediately.
+- **fetchHeaders()** uses `withContext(Dispatchers.IO)` to avoid `NetworkOnMainThreadException` when called from `viewModelScope` (which uses `Dispatchers.Main`).
+- **Auto-reconnect**: RobotRepository observes WebSocket state; when disconnected/error with a previous URL, reconnects after 2s delay.
 
 ## Environment
 - **Android SDK:** `/usr/lib/android-sdk`
