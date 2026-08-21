@@ -9,6 +9,26 @@ object Constants {
         const val PORT = "port"
         const val AUTO_CONNECT = "auto_connect"
         const val BUTTON_LAYOUT = "button_layout"
+        const val PLOT_CHANNELS = "plot_channels"
+        const val PLOT_RATE_HZ = "plot_rate_hz"
+        const val PLOT_HORIZON_SECONDS = "plot_horizon_seconds"
+    }
+
+    /** Realtime plot panel: DataStore-backed settings and rendering constants. */
+    object Plot {
+        const val DEFAULT_RATE_HZ = 10
+        const val DEFAULT_HORIZON_SECONDS = 60
+        val RATE_CHOICES_HZ = listOf(2, 5, 10, 20, 50)
+        const val MIN_HORIZON_SECONDS = 10
+        const val MAX_HORIZON_SECONDS = 600
+
+        /** Curve colors, assigned by selection order (palette cycles). */
+        val PALETTE = listOf(
+            0xFF2196F3L, 0xFF4CAF50L, 0xFFFFC107L, 0xFFE91E63L, 0xFF00BCD4L,
+            0xFFFF9800L, 0xFF9C27B0L, 0xFF009688L, 0xFFF44336L, 0xFF795548L
+        )
+
+        fun colorFor(selectionIndex: Int): Long = PALETTE[selectionIndex % PALETTE.size]
     }
 
     /** DataStore keys for configurable max velocity per policy mode (pos/neg per axis). */

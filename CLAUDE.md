@@ -32,6 +32,8 @@ Bitbot-Android/
 │   │   │   ├── ConnectionState.kt
 │   │   │   ├── ControlEvent.kt
 │   │   │   └── RobotState.kt
+│   │   ├── plot/
+│   │   │   └── PlotRecorder.kt      # @Singleton recorder: channel registry, ring buffers, CSV builder
 │   │   ├── remote/
 │   │   │   ├── api/RobotApi.kt      # HTTP: headers, stateslist, control mappings
 │   │   │   ├── websocket/WebSocketClient.kt  # WS + monitor_data parsing + polling
@@ -58,6 +60,10 @@ Bitbot-Android/
 │   │   │   ├── data/                # Realtime data monitoring panel
 │   │   │   │   ├── DataScreen.kt    # Kernel stats bar + tabbed device table
 │   │   │   │   └── DataViewModel.kt # Fetches headers, polls monitor_data, parses rows
+│   │   │   ├── plot/                # Realtime data plot panel (record/freeze/save)
+│   │   │   │   ├── PlotScreen.kt    # Record button, legend, channel picker, save CSV/PNG
+│   │   │   │   ├── PlotViewModel.kt # Config persistence, recording control, MediaStore save
+│   │   │   │   └── components/PlotCanvas.kt  # Custom canvas plot: axes, pan/zoom, decimation
 │   │   │   └── settings/
 │   │   └── theme/
 │   └── util/
@@ -89,11 +95,19 @@ Configurable panel buttons send Down on press and Up on release (like the deskto
 - **Important:** `-(0.0f)` produces `-0.0f` which encodes as `Long.MIN_VALUE`. `scaleVelocity()` returns `0.0` explicitly when input is zero.
 
 ### Monitor Data (Robot → App)
-- **Polling:** App sends `{"type":"request_data","data":""}` at 10Hz (only when Data panel is active)
+- **Polling:** clients call `acquireDataPolling(rateHz)`/`releaseDataPolling(handle)` (refcounted). There is exactly **one** `request_data` loop app-wide running at the **max** requested rate — backend replies are untagged, so parallel loops would corrupt sample cadence. The loop re-reads the current socket each tick and survives disconnects/reconnects.
 - **Response:** `{"type":"monitor_data","data":"{\"data\":[N,N,...]}"}`  — double-serialized JSON with flat double array
 - **Data layout:** kernel values first, then all device headers sequentially, then extra values
 - **Headers** fetched via HTTP `GET /monitor/headers` — returns `HeadersResponseDto { kernel, bus { devices [{ name, type, headers }] }, extra }`
 - **State names** from HTTP `GET /monitor/stateslist` — maps state IDs to human-readable names
+
+### Plot Panel
+- Third panel (`PanelType.PLOT`): select any number of channels (stable keys `kernel:x` / `device:header` / `extra:x`), record at a configurable rate (2–50 Hz) into per-channel ring buffers trimmed to the horizon; recording continues in the background (PlotRecorder is an @Singleton that owns its polling handle).
+- X axis = **step index** (one recorded frame = one step); follow mode window = `[sampleIdx - horizon, sampleIdx]`; pause freezes, resume continues the step index.
+- Custom `PlotCanvas` on android.graphics.Canvas (same `PlotRenderer` draws the live view and PNG exports): nice-number ticks, per-pixel min/max decimation, drag pans (x/y separately), pinch zooms both axes; FOLLOW / AUTO Y / RESET chips re-enable auto modes.
+- Save when stopped: CSV (`step` + one column per channel, late-added channels have leading empty cells) and PNG snapshot → `Downloads/Bitbot/` via MediaStore (no permission needed).
+- Settings persist in DataStore: `plot_channels` (ordered JSON keys → curve colors by index), `plot_rate_hz`, `plot_horizon_seconds`.
+- DataViewModel throttles `monitorData` via `.sample(100)` so the table stays at 10 Hz even when the recorder polls at 50 Hz.
 
 ### Gamepad → Event Mapping (from bitbot_frontend.hpp; the app's default button layout mirrors it, except PowerOn no longer auto-sends `enable_record` — add a separate Record button if needed)
 | Gamepad | Event | Value |
@@ -146,7 +160,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - **scaleVelocity**: `scaleVelocity(input, posLimit, negLimit)` — input > 0 → input × posLimit, input < 0 → input × negLimit, input == 0 → 0.0. Guards against -0.0 via `if (result == 0.0) 0.0`.
 - **Computed velocities** in `PilotUiState` (`velX`, `velY`, `velW`) updated every 100Hz tick, used by debug panel
 - **Start button** acts on release (kernel `start` only fires on key Up); all buttons send Down+Up pairs
-- **Data panel** fetches headers via HTTP (`/monitor/headers`) and polls `request_data` at 10Hz only when active. `startDataPolling()`/`stopDataPolling()` called from `DataViewModel` init/onCleared. Connection state observer retries polling on reconnect.
+- **Data panel** fetches headers via HTTP (`/monitor/headers`) and acquires data polling at 10 Hz in `DataViewModel` init (released in onCleared); the shared poll loop handles reconnects internally, and `monitorData` is consumed through `.sample(100)` to keep table updates at 10 Hz.
 - **PanelSwitcher**: Tap-to-toggle FAB at bottom-left, switches between Pilot and Data panels. Uses `AnimatedVisibility` with horizontal slide.
 - **PanelHostScreen**: Wraps PilotScreen and DataScreen as switchable composables. Route: `panel_host/{initialPanel}`.
 - **Data table**: LazyColumn with stickyHeader, fixed column widths (Name=110dp, Values=64dp, Mode=28dp), shared horizontal ScrollState for sync scrolling. Kernel stats bar shows deduplicated labels in top bar.

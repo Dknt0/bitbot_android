@@ -6,11 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.bitbot.data.model.ConnectionState
 import com.bitbot.data.remote.dto.HeadersResponseDto
 import com.bitbot.data.repository.RobotRepository
+import com.bitbot.data.remote.websocket.PollingHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -32,6 +35,7 @@ data class DataUiState(
     val extraValues: List<Double> = emptyList()
 )
 
+@OptIn(FlowPreview::class)
 @HiltViewModel
 class DataViewModel @Inject constructor(
     private val repository: RobotRepository
@@ -44,8 +48,14 @@ class DataViewModel @Inject constructor(
     val uiState: StateFlow<DataUiState> = _uiState.asStateFlow()
 
     private var headers: HeadersResponseDto? = null
+    private var pollHandle: PollingHandle? = null
 
     init {
+        // Acquire once for this panel's lifetime; the shared poll loop handles
+        // reconnects itself. 10 Hz table updates regardless of the poll rate
+        // (the plot recorder may poll faster and shares the same frames).
+        pollHandle = repository.acquireDataPolling(rateHz = 10)
+
         // Fetch headers from HTTP API
         viewModelScope.launch {
             repository.fetchHeaders()
@@ -58,21 +68,11 @@ class DataViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(stateNames = stateMap)
 
             rebuildTabs()
-            repository.startDataPolling()
         }
 
-        // Start polling whenever connection becomes ready (handles reconnects)
+        // Observe monitor data (throttled to 10 Hz) and build rows
         viewModelScope.launch {
-            repository.connectionState.collect { cs ->
-                if (cs is ConnectionState.Connected && headers != null) {
-                    repository.startDataPolling()
-                }
-            }
-        }
-
-        // Observe monitor data and build rows
-        viewModelScope.launch {
-            repository.monitorData.collect { data ->
+            repository.monitorData.sample(100).collect { data ->
                 if (data.isEmpty()) return@collect
                 val h = headers ?: return@collect
                 parseAndUpdate(h, data)
@@ -143,7 +143,8 @@ class DataViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        repository.stopDataPolling()
+        pollHandle?.let { repository.releaseDataPolling(it) }
+        pollHandle = null
     }
 
     companion object {

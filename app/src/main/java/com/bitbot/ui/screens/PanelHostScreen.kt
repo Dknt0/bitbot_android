@@ -15,6 +15,7 @@ import com.bitbot.ui.components.PanelSwitcher
 import com.bitbot.ui.components.PanelType
 import com.bitbot.ui.screens.data.DataScreen
 import com.bitbot.ui.screens.pilot.PilotScreen
+import com.bitbot.ui.screens.plot.PlotScreen
 
 @Composable
 fun PanelHostScreen(
@@ -31,6 +32,7 @@ fun PanelHostScreen(
                 onNavigateToButtonEditor = onNavigateToButtonEditor
             )
             PanelType.DATA -> DataScreen(onNavigateBack = onNavigateBack)
+            PanelType.PLOT -> PlotScreen(onNavigateBack = onNavigateBack)
         }
 
         PanelSwitcher(

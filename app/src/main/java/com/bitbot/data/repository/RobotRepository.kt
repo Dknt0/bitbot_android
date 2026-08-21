@@ -6,6 +6,7 @@ import com.bitbot.data.remote.api.RobotApi
 import com.bitbot.data.remote.dto.ControlMappingDto
 import com.bitbot.data.remote.dto.HeadersResponseDto
 import com.bitbot.data.remote.dto.StatesListResponseDto
+import com.bitbot.data.remote.websocket.PollingHandle
 import com.bitbot.data.remote.websocket.WebSocketClient
 import com.bitbot.data.remote.websocket.WebSocketState
 import com.bitbot.util.Constants
@@ -148,8 +149,13 @@ class RobotRepository @Inject constructor(
         _connectionState.value = ConnectionState.Disconnected
     }
 
-    fun startDataPolling() = webSocketClient.startDataPolling()
-    fun stopDataPolling() = webSocketClient.stopDataPolling()
+    /**
+     * Register a monitor-data polling consumer (shared single loop, runs at the
+     * max requested rate; survives reconnects). Release with [releaseDataPolling].
+     */
+    fun acquireDataPolling(rateHz: Int): PollingHandle = webSocketClient.acquirePolling(rateHz)
+
+    fun releaseDataPolling(handle: PollingHandle) = webSocketClient.releasePolling(handle)
     fun getWsStateDebug(): String = webSocketClient.state.value.toString()
 
     /** Send a button event: value 1 (fire) or 2 (toggle) */

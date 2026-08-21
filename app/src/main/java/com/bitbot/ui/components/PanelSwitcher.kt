@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +43,8 @@ import androidx.compose.ui.zIndex
 
 enum class PanelType(val label: String, val icon: ImageVector) {
     PILOT("Pilot", Icons.Default.SportsEsports),
-    DATA("Data", Icons.Default.Dashboard)
+    DATA("Data", Icons.Default.Dashboard),
+    PLOT("Plot", Icons.Default.ShowChart)
 }
 
 /**

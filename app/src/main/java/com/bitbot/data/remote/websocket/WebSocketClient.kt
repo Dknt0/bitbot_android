@@ -31,6 +31,42 @@ sealed class WebSocketState {
     data class Error(val message: String) : WebSocketState()
 }
 
+/** Opaque handle for a polling client. */
+class PollingHandle internal constructor(internal val id: Int)
+
+/**
+ * Pure refcount logic for the shared request_data poll loop.
+ *
+ * The backend answers each request_data with one monitor_data frame and does
+ * not tag responses per client, so the app must keep exactly ONE poll loop.
+ * Consumers register the rate they want; the loop runs at the max requested
+ * rate while at least one consumer is registered.
+ */
+internal class PollArbiter {
+    private val clients = mutableMapOf<Int, Int>() // handle id -> rateHz
+    private var nextId = 0
+
+    @Synchronized
+    fun add(rateHz: Int): PollingHandle {
+        val handle = PollingHandle(nextId++)
+        clients[handle.id] = rateHz.coerceAtLeast(1)
+        return handle
+    }
+
+    /** Removes a consumer. Returns the new max rate, or null when no consumers remain. */
+    @Synchronized
+    fun remove(handle: PollingHandle): Int? {
+        clients.remove(handle.id)
+        return clients.values.maxOrNull()
+    }
+
+    @Synchronized
+    fun maxRate(): Int? = clients.values.maxOrNull()
+
+    @Synchronized
+    fun isEmpty(): Boolean = clients.isEmpty()
+}
+
 /**
  * WebSocket client matching the bitbot_xbox protocol.
  *
@@ -51,6 +87,7 @@ class WebSocketClient @Inject constructor(
 
     private var webSocket: WebSocket? = null
     private var currentUrl: String? = null
+    private val pollArbiter = PollArbiter()
     private var pollJob: Job? = null
 
     /** True if a URL was previously connected and not cleared by explicit disconnect. */
@@ -109,7 +146,6 @@ class WebSocketClient @Inject constructor(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                pollJob?.cancel()
                 webSocket.close(1000, null)
                 this@WebSocketClient.webSocket = null
                 // Keep currentUrl for auto-reconnect
@@ -117,14 +153,12 @@ class WebSocketClient @Inject constructor(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                pollJob?.cancel()
                 this@WebSocketClient.webSocket = null
                 // Keep currentUrl for auto-reconnect
                 _state.value = WebSocketState.Disconnected
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                pollJob?.cancel()
                 Log.e(TAG, "WebSocket failure: ${t.message}")
                 this@WebSocketClient.webSocket = null
                 // Keep currentUrl for auto-reconnect
@@ -134,31 +168,46 @@ class WebSocketClient @Inject constructor(
     }
 
     fun disconnect() {
-        pollJob?.cancel()
         webSocket?.close(1000, "Client disconnecting")
         webSocket = null
         currentUrl = null
         _state.value = WebSocketState.Disconnected
     }
 
-    /** Start polling request_data at 10Hz. Call when data panel becomes active. */
-    fun startDataPolling() {
-        val ws = webSocket ?: return
-        if (_state.value !is WebSocketState.Connected) return
-        if (pollJob?.isActive == true) return
+    /**
+     * Register a consumer of monitor-data polling. One shared loop runs at the
+     * max requested rate and re-reads the current socket every tick, so it
+     * survives disconnects and auto-reconnects (backend replies are untagged —
+     * parallel loops would corrupt sample cadence). Release with [releasePolling].
+     */
+    fun acquirePolling(rateHz: Int): PollingHandle {
+        val handle = pollArbiter.add(rateHz)
+        syncPollLoop()
+        return handle
+    }
 
-        pollJob = scope.launch {
-            while (isActive) {
-                ws.send("""{"type":"request_data","data":""}""")
-                delay(100)
-            }
+    fun releasePolling(handle: PollingHandle) {
+        val newMax = pollArbiter.remove(handle)
+        if (newMax == null) {
+            pollJob?.cancel()
+            pollJob = null
+        } else {
+            syncPollLoop()
         }
     }
 
-    /** Stop polling request_data. Call when data panel is left. */
-    fun stopDataPolling() {
+    private fun syncPollLoop() {
+        val rate = pollArbiter.maxRate() ?: return
         pollJob?.cancel()
-        pollJob = null
+        pollJob = scope.launch {
+            while (isActive) {
+                val ws = webSocket
+                if (ws != null && _state.value is WebSocketState.Connected) {
+                    ws.send("""{"type":"request_data","data":""}""")
+                }
+                delay(1000L / rate)
+            }
+        }
     }
 
     /**
