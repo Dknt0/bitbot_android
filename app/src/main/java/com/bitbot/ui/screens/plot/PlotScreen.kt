@@ -190,7 +190,7 @@ fun PlotScreen(
                 }
                 IconButton(
                     onClick = {
-                        val frame = buildFrame(viewState, ::seriesProvider, uiState.sampleIdx)
+                        val frame = buildFrame(viewState, viewModel.xSeries(), ::seriesProvider, uiState.sampleIdx)
                         val legend = uiState.selected
                             .filter { it.key !in hiddenKeys }
                             .map { ch ->
@@ -280,6 +280,7 @@ fun PlotScreen(
                     version = version,
                     sampleIdx = uiState.sampleIdx,
                     horizonSpanX = uiState.horizonSpanX,
+                    xsProvider = viewModel::xSeries,
                     seriesProvider = ::seriesProvider,
                     modifier = Modifier
                         .fillMaxSize()
@@ -353,6 +354,7 @@ fun PlotScreen(
 /** Freeze the current view (or auto-fit) into a frame for PNG export. */
 private fun buildFrame(
     state: PlotViewState,
+    xs: List<Double>,
     seriesProvider: () -> List<PlotSeries>,
     sampleIdx: Long
 ): PlotFrame {
@@ -360,11 +362,11 @@ private fun buildFrame(
     var yMin = state.yMin
     var yMax = state.yMax
     if (state.autoY) {
-        autoFitY(series, state.xEnd - state.xSpan, state.xEnd, sampleIdx)?.let { (lo, hi) ->
+        autoFitY(series, xs, state.xEnd - state.xSpan, state.xEnd)?.let { (lo, hi) ->
             yMin = lo; yMax = hi
         }
     }
-    return PlotFrame(state.xEnd, state.xSpan, yMin, yMax, sampleIdx, series)
+    return PlotFrame(state.xEnd, state.xSpan, yMin, yMax, sampleIdx, xs, series)
 }
 
 @Composable

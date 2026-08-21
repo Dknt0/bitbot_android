@@ -127,6 +127,7 @@ class PlotTest {
         assertEquals(2L, rec.sampleIdx)
         assertEquals(listOf(1.0, 3.0), rec.series("a"))
         assertEquals(listOf(2.0, 4.0), rec.series("b"))
+        assertEquals(listOf(1.0, 2.0), rec.xSeries) // fallback: app sample count
         verify(exactly = 1) { h.repository.acquireDataPolling(10) }
     }
 
@@ -143,6 +144,8 @@ class PlotTest {
         testScheduler.advanceUntilIdle()
         assertEquals(5035L, rec.sampleIdx) // kernel counter, not app sample count
         assertEquals(listOf(11.0, 12.0), rec.series("a"))
+        // x values are the kernel counts — samples are ~35 periods apart, not 1
+        assertEquals(listOf(5000.0, 5035.0), rec.xSeries)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -158,6 +161,7 @@ class PlotTest {
         testScheduler.advanceUntilIdle()
         assertEquals(3L, rec.sampleIdx)
         assertEquals(listOf(1.0), rec.series("a")) // old epoch dropped
+        assertEquals(listOf(3.0), rec.xSeries)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -214,33 +218,36 @@ class PlotTest {
     // --- CSV export ---
 
     @Test
-    fun `csv has kernel_count column and aligned values`() {
+    fun `csv carries true non-uniform kernel_count per row`() {
         val a = PlotChannel("kernel:x", 0, "kernel", "x")
         val b = PlotChannel("dev:leg:pos", 1, "leg", "pos")
+        // 500 Hz kernel polled at 10 Hz: consecutive x are 50 periods apart
         val csv = PlotRecorder.buildCsv(
             channels = listOf(a, b),
             buffers = mapOf(
                 "kernel:x" to listOf(1.0, 2.0, 3.0),
                 "dev:leg:pos" to listOf(10.0) // started later
             ),
-            endIdx = 3000L // kernel periods_count of the newest sample
+            xs = listOf(1000.0, 1050.0, 1100.0)
         )
         val lines = csv.trim().lines()
         assertEquals("kernel_count,kernel.x,leg.pos", lines[0])
-        assertEquals("2998,1,", lines[1])
-        assertEquals("2999,2,", lines[2])
-        assertEquals("3000,3,10", lines[3])
+        assertEquals("1000,1,", lines[1])
+        assertEquals("1050,2,", lines[2])
+        assertEquals("1100,3,10", lines[3])
     }
 
     @Test
-    fun `csv empty when no channels`() {
-        assertEquals("", PlotRecorder.buildCsv(emptyList(), emptyMap(), 0L))
+    fun `csv empty when no channels or frames`() {
+        assertEquals("", PlotRecorder.buildCsv(emptyList(), emptyMap(), emptyList()))
+        val ch = PlotChannel("kernel:x", 0, "kernel", "x")
+        assertEquals("", PlotRecorder.buildCsv(listOf(ch), mapOf("kernel:x" to listOf(1.0)), emptyList()))
     }
 
     @Test
     fun `csv quotes names containing commas`() {
         val ch = PlotChannel("dev:a:b, c", 0, "a", "b, c")
-        val csv = PlotRecorder.buildCsv(listOf(ch), mapOf("dev:a:b, c" to listOf(1.5)), 42L)
+        val csv = PlotRecorder.buildCsv(listOf(ch), mapOf("dev:a:b, c" to listOf(1.5)), listOf(42.0))
         assertTrue(csv.lines()[0].contains("\"a.b, c\""))
         assertEquals("42,1.5", csv.trim().lines()[1])
     }

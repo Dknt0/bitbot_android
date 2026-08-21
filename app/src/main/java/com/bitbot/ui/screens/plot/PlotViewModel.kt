@@ -174,6 +174,9 @@ class PlotViewModel @Inject constructor(
 
     fun seriesFor(channel: PlotChannel): List<Double> = recorder.series(channel.key)
 
+    /** X value (kernel periods_count) of every recorded frame, oldest..newest. */
+    fun xSeries(): List<Double> = recorder.xSeries
+
     fun dismissSaveMessage() { _saveMessage.value = null }
 
     /** Save recorded channels as CSV into Downloads/Bitbot/. */
@@ -182,7 +185,7 @@ class PlotViewModel @Inject constructor(
         if (s.selected.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             val buffers = s.selected.associate { it.key to recorder.series(it.key) }
-            val csv = PlotRecorder.buildCsv(s.selected, buffers, recorder.sampleIdx)
+            val csv = PlotRecorder.buildCsv(s.selected, buffers, recorder.xSeries)
             val uri = writeMediaStore("csv", "text/csv") { os -> os.write(csv.toByteArray(Charsets.UTF_8)) }
             _saveMessage.value = if (uri != null) "Saved CSV to Downloads/Bitbot" else "CSV save failed"
         }

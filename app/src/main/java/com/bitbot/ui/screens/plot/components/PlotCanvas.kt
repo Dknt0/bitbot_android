@@ -28,16 +28,22 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
-/** One drawable curve. [values] is oldest..newest; newest aligns with sampleIdx. */
+/** One drawable curve. [values] is oldest..newest, aligned to the tail of [PlotFrame.xs]. */
 class PlotSeries(val color: Color, val values: List<Double>)
 
-/** Immutable snapshot of everything needed to draw the plot once. */
+/**
+ * Immutable snapshot of everything needed to draw the plot once. [xs] holds the
+ * x value (kernel periods_count) of every recorded frame; a series' i-th value
+ * (from the end) corresponds to xs' i-th value from the end — the kernel loop
+ * and the poll rate differ, so spacing between samples is not uniform.
+ */
 class PlotFrame(
     val xEnd: Float,
     val xSpan: Float,
     val yMin: Float,
     val yMax: Float,
     val sampleIdx: Long,
+    val xs: List<Double>,
     val series: List<PlotSeries>
 )
 
@@ -97,7 +103,6 @@ object PlotRenderer {
         val ySpan = max(yMax - yMin, MIN_Y_SPAN)
 
         fun xToPx(x: Float) = plotLeft + (x - xStart) / xSpan * plotW
-        fun stepAtPx(px: Float) = xStart + (px - plotLeft) / plotW * xSpan
         fun yToPx(v: Double): Float {
             val t = ((v - yMin) / ySpan).toFloat().coerceIn(-0.5f, 1.5f)
             return plotBottom - t * plotH
@@ -129,46 +134,65 @@ object PlotRenderer {
             }
         }
 
-        // curves
+        // curves — iterate frames by real x value (poll spacing ≠ kernel spacing)
+        val xs = frame.xs
         val samplesPerPixel = xSpan / plotW
         for (s in frame.series) {
             val n = s.values.size
             if (n == 0) continue
-            val base = frame.sampleIdx - n // x of i-th value = base + i
-            val iFrom = max(0, ceil(xStart - base).toInt())
-            val iTo = min(n - 1, floor(xEnd - base).toInt())
-            if (iTo < iFrom) continue
+            val offset = xs.size - n // index into xs of this series' first value
+            var jFrom = 0
+            var jTo = -1
+            for (j in 0 until n) {
+                val x = xs[j + offset]
+                if (x < xStart) continue
+                if (x > xEnd) break
+                if (jTo < 0) jFrom = j
+                jTo = j
+            }
+            if (jTo < jFrom) continue
 
             curvePaint.color = s.color.toArgb()
             val path = android.graphics.Path()
             if (samplesPerPixel <= 1f) {
-                for (i in iFrom..iTo) {
-                    val px = xToPx((base + i).toFloat())
-                    val py = yToPx(s.values[i])
-                    if (i == iFrom) path.moveTo(px, py) else path.lineTo(px, py)
+                var started = false
+                for (j in jFrom..jTo) {
+                    val v = s.values[j]
+                    if (!v.isFinite()) continue
+                    val px = xToPx(xs[j + offset].toFloat())
+                    val py = yToPx(v)
+                    if (!started) {
+                        path.moveTo(px, py); started = true
+                    } else {
+                        path.lineTo(px, py)
+                    }
                 }
                 curvePaint.strokeWidth = 2f
             } else {
                 // One vertical min/max segment per pixel column
-                val firstCol = max(0f, floor(xToPx((base + iFrom).toFloat()) - plotLeft))
-                val lastCol = min(plotW, floor(xToPx((base + iTo).toFloat()) - plotLeft))
-                var col = firstCol
-                while (col <= lastCol) {
-                    val px = plotLeft + col
-                    val iA = max(iFrom, ceil(stepAtPx(px) - base).toInt())
-                    val iB = min(iTo, floor(stepAtPx(px + 1f) - base).toInt())
-                    if (iB >= iA) {
-                        var lo = s.values[iA]
-                        var hi = lo
-                        for (i in iA..iB) {
-                            val v = s.values[i]
-                            if (v < lo) lo = v
-                            if (v > hi) hi = v
+                var curCol = Int.MIN_VALUE
+                var lo = 0.0
+                var hi = 0.0
+                for (j in jFrom..jTo) {
+                    val v = s.values[j]
+                    if (!v.isFinite()) continue
+                    val col = floor(xToPx(xs[j + offset].toFloat()) - plotLeft).toInt()
+                    if (col != curCol) {
+                        if (curCol != Int.MIN_VALUE) {
+                            path.moveTo(plotLeft + curCol, yToPx(lo))
+                            path.lineTo(plotLeft + curCol, yToPx(hi))
                         }
-                        path.moveTo(px, yToPx(lo))
-                        path.lineTo(px, yToPx(hi))
+                        curCol = col
+                        lo = v
+                        hi = v
+                    } else {
+                        if (v < lo) lo = v
+                        if (v > hi) hi = v
                     }
-                    col += 1f
+                }
+                if (curCol != Int.MIN_VALUE) {
+                    path.moveTo(plotLeft + curCol, yToPx(lo))
+                    path.lineTo(plotLeft + curCol, yToPx(hi))
                 }
                 curvePaint.strokeWidth = 1.5f
             }
@@ -241,18 +265,20 @@ object PlotRenderer {
 
 /**
  * Auto-fit y range over the visible samples; null when no visible samples.
+ * Samples are located by their real x values ([xs]), not uniform spacing.
  */
-internal fun autoFitY(series: List<PlotSeries>, xStart: Float, xEnd: Float, sampleIdx: Long): Pair<Float, Float>? {
+internal fun autoFitY(series: List<PlotSeries>, xs: List<Double>, xStart: Float, xEnd: Float): Pair<Float, Float>? {
     var lo = Double.POSITIVE_INFINITY
     var hi = Double.NEGATIVE_INFINITY
     for (s in series) {
         val n = s.values.size
         if (n == 0) continue
-        val base = sampleIdx - n
-        val iFrom = max(0, ceil(xStart - base).toInt())
-        val iTo = min(n - 1, floor(xEnd - base).toInt())
-        for (i in iFrom..iTo) {
-            val v = s.values[i]
+        val offset = xs.size - n
+        for (j in 0 until n) {
+            val x = xs[j + offset]
+            if (x < xStart) continue
+            if (x > xEnd) break
+            val v = s.values[j]
             if (v.isFinite()) {
                 if (v < lo) lo = v
                 if (v > hi) hi = v
@@ -281,6 +307,7 @@ fun PlotCanvas(
     version: Long,
     sampleIdx: Long,
     horizonSpanX: Float,
+    xsProvider: () -> List<Double>,
     seriesProvider: () -> List<PlotSeries>,
     modifier: Modifier = Modifier
 ) {
@@ -341,14 +368,15 @@ fun PlotCanvas(
         @Suppress("UNUSED_EXPRESSION") version
 
         val series = seriesProvider()
+        val xs = xsProvider()
         if (state.autoY && series.isNotEmpty()) {
-            autoFitY(series, state.xEnd - state.xSpan, state.xEnd, sampleIdx)?.let { (lo, hi) ->
+            autoFitY(series, xs, state.xEnd - state.xSpan, state.xEnd)?.let { (lo, hi) ->
                 if (lo != state.yMin) state.yMin = lo
                 if (hi != state.yMax) state.yMax = hi
             }
         }
         PlotRenderer.render(
-            PlotFrame(state.xEnd, state.xSpan, state.yMin, state.yMax, sampleIdx, series),
+            PlotFrame(state.xEnd, state.xSpan, state.yMin, state.yMax, sampleIdx, xs, series),
             drawContext.canvas.nativeCanvas,
             size.width,
             size.height,

@@ -68,6 +68,15 @@ class PlotRecorder @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val buffers = LinkedHashMap<String, ArrayDeque<Double>>()
+
+    /**
+     * X value (kernel periods_count, or app sample count as fallback) of every
+     * recorded frame, oldest..newest — all channels share these frames. The
+     * kernel loop and our poll rate differ (e.g. 500 Hz vs 10 Hz), so samples
+     * are NOT spaced 1 x-unit apart; each carries its own x.
+     */
+    private val xBuf = ArrayDeque<Double>()
+
     private var channels: List<PlotChannel> = emptyList()
     private var capacity: Int = 1
     private var periodsIndex: Int = -1
@@ -144,6 +153,7 @@ class PlotRecorder @Inject constructor(
     /** Drop all recorded samples. */
     fun clear() {
         buffers.clear()
+        xBuf.clear()
         sampleIdxValue = 0
         _version.value++
     }
@@ -151,25 +161,37 @@ class PlotRecorder @Inject constructor(
     /**
      * Recorded samples for a channel, oldest..newest. Zero-copy view of the
      * ring buffer — do not mutate; reads and writes are main-thread only.
+     * The i-th value's x is [xSeries][xSeries] at `xs.size - values.size + i`.
      */
     fun series(key: String): List<Double> = buffers[key] ?: emptyList()
+
+    /** X value of every recorded frame, oldest..newest (zero-copy view). */
+    val xSeries: List<Double> get() = xBuf
 
     private fun appendFrame(frame: List<Double>) {
         val kernelCount = frame.getOrNull(periodsIndex)
             ?.takeIf { periodsIndex >= 0 && it.isFinite() }
             ?.toLong()
-        if (kernelCount != null) {
+        val x: Double = if (kernelCount != null) {
             if (kernelCount < sampleIdxValue) {
                 // Kernel restarted — start a fresh recording epoch
                 buffers.clear()
+                xBuf.clear()
             }
             sampleIdxValue = kernelCount
             updatePeriodRate(kernelCount)
+            kernelCount.toDouble()
         } else {
             sampleIdxValue++
+            sampleIdxValue.toDouble()
         }
+
+        xBuf.addLast(x)
+        while (xBuf.size > capacity) xBuf.removeFirst()
+
         for (ch in channels) {
-            val v = frame.getOrNull(ch.index) ?: continue
+            // Out-of-range frames keep alignment via NaN (skipped when drawing)
+            val v = frame.getOrNull(ch.index) ?: Double.NaN
             val buf = buffers.getOrPut(ch.key) { ArrayDeque() }
             buf.addLast(v)
             while (buf.size > capacity) buf.removeFirst()
@@ -196,30 +218,30 @@ class PlotRecorder @Inject constructor(
 
     companion object {
         /**
-         * Pure CSV export: `kernel_count` column (x axis value of each sample)
-         * plus one column per channel. Channels that started recording later
-         * have empty leading cells.
+         * Pure CSV export: `kernel_count` column (the true x value of each
+         * recorded frame) plus one column per channel. Channels that started
+         * recording later have empty leading cells.
          */
         fun buildCsv(
             channels: List<PlotChannel>,
             buffers: Map<String, List<Double>>,
-            endIdx: Long
+            xs: List<Double>
         ): String {
-            if (channels.isEmpty()) return ""
+            if (channels.isEmpty() || xs.isEmpty()) return ""
             val header = StringBuilder("kernel_count,")
                 .append(channels.joinToString(",") { escapeCsv("${it.group}.${it.name}") })
                 .append('\n')
             val rows = StringBuilder()
             val series = channels.map { buffers[it.key].orEmpty() }
-            val maxLen = series.maxOf { it.size }
-            val startX = endIdx - maxLen + 1
+            val maxLen = xs.size // every frame appends an x; series never exceed it
             for (i in 0 until maxLen) {
-                rows.append(startX + i)
+                rows.append("%.0f".format(Locale.US, xs[i]))
                 for (s in series) {
                     rows.append(',')
-                    // Right-pad alignment: newest sample of each series is the same step
                     val idxInSeries = i - (maxLen - s.size)
-                    if (idxInSeries >= 0) rows.append(formatNumber(s[idxInSeries]))
+                    if (idxInSeries >= 0 && idxInSeries < s.size && !s[idxInSeries].isNaN()) {
+                        rows.append(formatNumber(s[idxInSeries]))
+                    }
                 }
                 rows.append('\n')
             }
