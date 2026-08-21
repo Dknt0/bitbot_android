@@ -621,9 +621,7 @@ private fun PlotSettingsDialog(
                 Text("Time horizon: ${horizonSeconds}s", style = MaterialTheme.typography.titleSmall)
                 Slider(
                     value = horizonSeconds.toFloat(),
-                    onValueChange = {
-                        onHorizonChange((it / 10f).toInt() * 10) // 10s steps
-                    },
+                    onValueChange = { onHorizonChange(it.toInt()) },
                     valueRange = Constants.Plot.MIN_HORIZON_SECONDS.toFloat()..
                         Constants.Plot.MAX_HORIZON_SECONDS.toFloat()
                 )

@@ -19,8 +19,8 @@ object Constants {
         const val DEFAULT_RATE_HZ = 10
         const val DEFAULT_HORIZON_SECONDS = 60
         val RATE_CHOICES_HZ = listOf(10, 20, 50, 100)
-        const val MIN_HORIZON_SECONDS = 10
-        const val MAX_HORIZON_SECONDS = 600
+        const val MIN_HORIZON_SECONDS = 1
+        const val MAX_HORIZON_SECONDS = 60
 
         /** Kernel monitor header holding the control-loop counter used as the plot x axis. */
         const val PERIODS_COUNT_HEADER = "periods_count"
