@@ -136,7 +136,6 @@ object PlotRenderer {
 
         // curves — iterate frames by real x value (poll spacing ≠ kernel spacing)
         val xs = frame.xs
-        val samplesPerPixel = xSpan / plotW
         for (s in frame.series) {
             val n = s.values.size
             if (n == 0) continue
@@ -152,9 +151,13 @@ object PlotRenderer {
             }
             if (jTo < jFrom) continue
 
+            // Density is SAMPLES per pixel (not x-span per pixel — kernel
+            // periods per pixel is >1 even for sparse sampled data).
+            val samplesPerPixel = (jTo - jFrom + 1).toFloat() / plotW
+
             curvePaint.color = s.color.toArgb()
             val path = android.graphics.Path()
-            if (samplesPerPixel <= 1f) {
+            if (samplesPerPixel <= 1.5f) {
                 var started = false
                 for (j in jFrom..jTo) {
                     val v = s.values[j]
@@ -169,18 +172,32 @@ object PlotRenderer {
                 }
                 curvePaint.strokeWidth = 2f
             } else {
-                // One vertical min/max segment per pixel column
+                // Per-pixel min/max columns, connected between columns so the
+                // trace stays continuous at moderate densities.
                 var curCol = Int.MIN_VALUE
                 var lo = 0.0
                 var hi = 0.0
+                var colLastY = 0f
+                var prevCol = Int.MIN_VALUE
+                var prevColLastY = 0f
+                fun flushColumn() {
+                    val px = plotLeft + curCol
+                    if (prevCol != Int.MIN_VALUE) {
+                        path.moveTo(plotLeft + prevCol, prevColLastY)
+                        path.lineTo(px, yToPx(lo))
+                    }
+                    path.moveTo(px, yToPx(lo))
+                    path.lineTo(px, yToPx(hi))
+                }
                 for (j in jFrom..jTo) {
                     val v = s.values[j]
                     if (!v.isFinite()) continue
                     val col = floor(xToPx(xs[j + offset].toFloat()) - plotLeft).toInt()
                     if (col != curCol) {
                         if (curCol != Int.MIN_VALUE) {
-                            path.moveTo(plotLeft + curCol, yToPx(lo))
-                            path.lineTo(plotLeft + curCol, yToPx(hi))
+                            flushColumn()
+                            prevCol = curCol
+                            prevColLastY = colLastY
                         }
                         curCol = col
                         lo = v
@@ -189,10 +206,10 @@ object PlotRenderer {
                         if (v < lo) lo = v
                         if (v > hi) hi = v
                     }
+                    colLastY = yToPx(v)
                 }
                 if (curCol != Int.MIN_VALUE) {
-                    path.moveTo(plotLeft + curCol, yToPx(lo))
-                    path.lineTo(plotLeft + curCol, yToPx(hi))
+                    flushColumn()
                 }
                 curvePaint.strokeWidth = 1.5f
             }
