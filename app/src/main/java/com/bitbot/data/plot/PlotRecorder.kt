@@ -3,6 +3,7 @@ package com.bitbot.data.plot
 import com.bitbot.data.remote.dto.HeadersResponseDto
 import com.bitbot.data.remote.websocket.PollingHandle
 import com.bitbot.data.repository.RobotRepository
+import com.bitbot.util.Constants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +46,10 @@ object PlotChannels {
         }
         return out
     }
+
+    /** Index of the kernel's control-loop counter in the flat frame; -1 if absent. */
+    fun periodsIndex(headers: HeadersResponseDto?): Int =
+        headers?.kernel?.indexOfFirst { it == Constants.Plot.PERIODS_COUNT_HEADER } ?: -1
 }
 
 /**
@@ -65,10 +70,21 @@ class PlotRecorder @Inject constructor(
     private val buffers = LinkedHashMap<String, ArrayDeque<Double>>()
     private var channels: List<PlotChannel> = emptyList()
     private var capacity: Int = 1
+    private var periodsIndex: Int = -1
 
+    /**
+     * Step index for the x axis: the kernel's own control-loop counter
+     * (periods_count) when available, otherwise the app's sample count.
+     * Independent of the poll rate — same horizon, same plot length.
+     */
     private var sampleIdxValue: Long = 0
-    /** Step index of the most recent recorded sample (x axis). */
     val sampleIdx: Long get() = sampleIdxValue
+
+    /** Estimated kernel control-loop periods per wall second; 0 until measured. */
+    var periodsPerSecond: Double = 0.0
+        private set
+    private var rateWinStartPeriod = -1L
+    private var rateWinStartNanos = 0L
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
@@ -84,8 +100,14 @@ class PlotRecorder @Inject constructor(
      * (earlier samples empty); removed channels' buffers are dropped.
      * Rate/horizon changes apply immediately, also while recording.
      */
-    fun updateConfig(channels: List<PlotChannel>, rateHz: Int, horizonSamples: Int) {
+    fun updateConfig(
+        channels: List<PlotChannel>,
+        rateHz: Int,
+        horizonSamples: Int,
+        periodsIndex: Int = this.periodsIndex
+    ) {
         this.channels = channels
+        this.periodsIndex = periodsIndex
         capacity = horizonSamples.coerceAtLeast(1)
         buffers.keys.retainAll(channels.map { it.key }.toSet())
         buffers.values.forEach { buf -> while (buf.size > capacity) buf.removeFirst() }
@@ -126,38 +148,76 @@ class PlotRecorder @Inject constructor(
         _version.value++
     }
 
-    /** Latest-first sample list for a channel (oldest .. newest). Empty if none. */
-    fun series(key: String): List<Double> = buffers[key]?.toList() ?: emptyList()
+    /**
+     * Recorded samples for a channel, oldest..newest. Zero-copy view of the
+     * ring buffer — do not mutate; reads and writes are main-thread only.
+     */
+    fun series(key: String): List<Double> = buffers[key] ?: emptyList()
 
     private fun appendFrame(frame: List<Double>) {
+        val kernelCount = frame.getOrNull(periodsIndex)
+            ?.takeIf { periodsIndex >= 0 && it.isFinite() }
+            ?.toLong()
+        if (kernelCount != null) {
+            if (kernelCount < sampleIdxValue) {
+                // Kernel restarted — start a fresh recording epoch
+                buffers.clear()
+            }
+            sampleIdxValue = kernelCount
+            updatePeriodRate(kernelCount)
+        } else {
+            sampleIdxValue++
+        }
         for (ch in channels) {
             val v = frame.getOrNull(ch.index) ?: continue
             val buf = buffers.getOrPut(ch.key) { ArrayDeque() }
             buf.addLast(v)
             while (buf.size > capacity) buf.removeFirst()
         }
-        sampleIdxValue++
         _version.value++
+    }
+
+    /** Rolling ~1s-window estimate of kernel periods per wall second. */
+    private fun updatePeriodRate(period: Long) {
+        val now = System.nanoTime()
+        if (rateWinStartPeriod < 0 || period < rateWinStartPeriod) {
+            rateWinStartPeriod = period
+            rateWinStartNanos = now
+            return
+        }
+        val dt = (now - rateWinStartNanos) / 1e9
+        if (dt >= 1.0) {
+            val dp = period - rateWinStartPeriod
+            if (dp > 0) periodsPerSecond = dp / dt
+            rateWinStartPeriod = period
+            rateWinStartNanos = now
+        }
     }
 
     companion object {
         /**
-         * Pure CSV export: `step` column plus one column per channel. Channels
-         * that started recording later have empty leading cells.
+         * Pure CSV export: `kernel_count` column (x axis value of each sample)
+         * plus one column per channel. Channels that started recording later
+         * have empty leading cells.
          */
-        fun buildCsv(channels: List<PlotChannel>, buffers: Map<String, List<Double>>): String {
+        fun buildCsv(
+            channels: List<PlotChannel>,
+            buffers: Map<String, List<Double>>,
+            endIdx: Long
+        ): String {
             if (channels.isEmpty()) return ""
-            val header = StringBuilder("step,")
+            val header = StringBuilder("kernel_count,")
                 .append(channels.joinToString(",") { escapeCsv("${it.group}.${it.name}") })
                 .append('\n')
             val rows = StringBuilder()
             val series = channels.map { buffers[it.key].orEmpty() }
             val maxLen = series.maxOf { it.size }
+            val startX = endIdx - maxLen + 1
             for (i in 0 until maxLen) {
-                rows.append(i + 1) // 1-based step for spreadsheet friendliness
+                rows.append(startX + i)
                 for (s in series) {
                     rows.append(',')
-                    // Left-pad alignment: newest sample of each series is the same step
+                    // Right-pad alignment: newest sample of each series is the same step
                     val idxInSeries = i - (maxLen - s.size)
                     if (idxInSeries >= 0) rows.append(formatNumber(s[idxInSeries]))
                 }

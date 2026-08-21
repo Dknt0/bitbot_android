@@ -140,6 +140,11 @@ class PilotViewModel @Inject constructor(
     // Press sends value 1 (key Down), release sends value 2 (key Up) — matches
     // the desktop reference frontend; every event type acts correctly.
     fun onButtonPress(event: String) {
+        // Original bitbot_xbox behavior: the power_on button always enables
+        // data recording on the robot first.
+        if (event == Events.POWER_ON) {
+            repository.sendButtonEvent(Events.ENABLE_RECORD, ButtonValue.DOWN)
+        }
         repository.sendButtonEvent(event, ButtonValue.DOWN)
         ButtonEvents.policyModeForEvent(event)?.let { mode ->
             _uiState.value = _uiState.value.copy(policyMode = mode)

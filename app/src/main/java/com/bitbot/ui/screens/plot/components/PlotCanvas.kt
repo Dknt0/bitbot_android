@@ -221,7 +221,7 @@ fun PlotCanvas(
     state: PlotViewState,
     version: Long,
     sampleIdx: Long,
-    horizonSamples: Int,
+    horizonSpanX: Float,
     seriesProvider: () -> List<PlotSeries>,
     modifier: Modifier = Modifier
 ) {
@@ -232,7 +232,7 @@ fun PlotCanvas(
     LaunchedEffect(version, state.followX) {
         if (state.followX) {
             state.xEnd = sampleIdx.toFloat()
-            state.xSpan = maxOf(horizonSamples.toFloat(), MIN_X_SPAN)
+            state.xSpan = maxOf(horizonSpanX, MIN_X_SPAN)
         }
     }
 
@@ -246,7 +246,7 @@ fun PlotCanvas(
                 viewHeight = size.height.toFloat()
             }
             .pointerInput(state) {
-                detectTransformGestures { _, pan, zoom, _ ->
+                detectTransformGestures { centroid, pan, zoom, _ ->
                     if (pan.x != 0f) {
                         state.followX = false
                         val perPx = state.xSpan / viewWidth
@@ -261,16 +261,18 @@ fun PlotCanvas(
                         state.yMax = mid + half
                     }
                     if (zoom != 1f && zoom > 0f) {
-                        // detectTransformGestures reports a uniform zoom factor;
-                        // apply it to both axes simultaneously.
+                        // Zoom anchored at the pinch centroid (detectTransformGestures
+                        // reports a uniform factor; apply it to both axes).
+                        val cx = (state.xEnd - state.xSpan) + centroid.x / viewWidth * state.xSpan
+                        val cy = state.yMin + (1f - centroid.y / viewHeight) * (state.yMax - state.yMin)
                         state.followX = false
-                        state.xSpan = (state.xSpan / zoom).coerceIn(MIN_X_SPAN, 1e7f)
-                        state.autoY = false
-                        val mid = (state.yMax + state.yMin) / 2f
-                        val half = ((state.yMax - state.yMin) / 2f) / zoom
-                        if (half * 2 > MIN_Y_SPAN) {
-                            state.yMin = mid - half
-                            state.yMax = mid + half
+                        state.xSpan = (state.xSpan / zoom).coerceIn(MIN_X_SPAN, 1e9f)
+                        state.xEnd = cx + (state.xEnd - cx) / zoom
+                        val halfY = ((state.yMax - state.yMin) / 2f) / zoom
+                        if (halfY * 2 > MIN_Y_SPAN) {
+                            state.autoY = false
+                            state.yMin = cy - (cy - state.yMin) / zoom
+                            state.yMax = cy + (state.yMax - cy) / zoom
                         }
                     }
                 }

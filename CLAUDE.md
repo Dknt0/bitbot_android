@@ -102,14 +102,16 @@ Configurable panel buttons send Down on press and Up on release (like the deskto
 - **State names** from HTTP `GET /monitor/stateslist` — maps state IDs to human-readable names
 
 ### Plot Panel
-- Third panel (`PanelType.PLOT`): select any number of channels (stable keys `kernel:x` / `device:header` / `extra:x`), record at a configurable rate (2–50 Hz) into per-channel ring buffers trimmed to the horizon; recording continues in the background (PlotRecorder is an @Singleton that owns its polling handle).
-- X axis = **step index** (one recorded frame = one step); follow mode window = `[sampleIdx - horizon, sampleIdx]`; pause freezes, resume continues the step index.
+- Third panel (`PanelType.PLOT`): select any number of channels (stable keys `kernel:x` / `device:header` / `extra:x`), record at a configurable rate (10/20/50/100 Hz) into per-channel ring buffers trimmed to the horizon; recording continues in the background (PlotRecorder is an @Singleton that owns its polling handle).
+- X axis = the kernel's own **`periods_count`** (control-loop counter, kernel frame index 1) — NOT the app's poll count, so the plot length is poll-rate independent; a higher rate only packs more points into the same window. A backward jump in the counter (kernel restart) clears the buffers. Fallback when the header is absent: app sample count. The follow window spans `horizonSeconds × periods/second` (period rate measured from incoming frames over ~1 s windows).
+- Channel picker is a full-screen tree: groups (kernel/devices/extra) collapse/expand; tri-state checkbox on a group selects all its channels; the search box switches to a flat cross-group result list.
 - Custom `PlotCanvas` on android.graphics.Canvas (same `PlotRenderer` draws the live view and PNG exports): nice-number ticks, per-pixel min/max decimation, drag pans (x/y separately), pinch zooms both axes; FOLLOW / AUTO Y / RESET chips re-enable auto modes.
-- Save when stopped: CSV (`step` + one column per channel, late-added channels have leading empty cells) and PNG snapshot → `Downloads/Bitbot/` via MediaStore (no permission needed).
+- Save when stopped: CSV (`kernel_count` + one column per channel, late-added channels have leading empty cells) and PNG snapshot → `Downloads/Bitbot/` via MediaStore (no permission needed).
+- Memory: ring buffers are hard-capped at horizon × rate samples; `series()` is a zero-copy view of the deque (main-thread only); UI-state idx updates throttled to 5 Hz while the canvas redraws from the recorder's version flow.
 - Settings persist in DataStore: `plot_channels` (ordered JSON keys → curve colors by index), `plot_rate_hz`, `plot_horizon_seconds`.
 - DataViewModel throttles `monitorData` via `.sample(100)` so the table stays at 10 Hz even when the recorder polls at 50 Hz.
 
-### Gamepad → Event Mapping (from bitbot_frontend.hpp; the app's default button layout mirrors it, except PowerOn no longer auto-sends `enable_record` — add a separate Record button if needed)
+### Gamepad → Event Mapping (from bitbot_frontend.hpp; the app's default button layout mirrors it; the PowerOn button always sends `enable_record` + `power_on` together, like bitbot_xbox)
 | Gamepad | Event | Value |
 |---|---|---|
 | A | `init_pose` | Fire (1) |

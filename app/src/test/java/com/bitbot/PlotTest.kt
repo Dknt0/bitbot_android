@@ -118,7 +118,7 @@ class PlotTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
         val channels = listOf(chan("a", 0), chan("b", 2))
-        rec.updateConfig(channels, 10, 100)
+        rec.updateConfig(channels, 10, 100, periodsIndex = -1) // app-count fallback
         rec.start(10)
         h.monitorData.value = listOf(1.0, 9.9, 2.0)
         testScheduler.advanceUntilIdle()
@@ -128,6 +128,36 @@ class PlotTest {
         assertEquals(listOf(1.0, 3.0), rec.series("a"))
         assertEquals(listOf(2.0, 4.0), rec.series("b"))
         verify(exactly = 1) { h.repository.acquireDataPolling(10) }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `recorder uses kernel periods_count as step index`() = runTest {
+        val h = RecorderHarness()
+        val rec = PlotRecorder(h.repository)
+        rec.updateConfig(listOf(chan("a", 0)), 10, 100, periodsIndex = 1)
+        rec.start(10)
+        h.monitorData.value = listOf(11.0, 5000.0)
+        testScheduler.advanceUntilIdle()
+        h.monitorData.value = listOf(12.0, 5035.0)
+        testScheduler.advanceUntilIdle()
+        assertEquals(5035L, rec.sampleIdx) // kernel counter, not app sample count
+        assertEquals(listOf(11.0, 12.0), rec.series("a"))
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `kernel counter going backwards clears buffers (restart)`() = runTest {
+        val h = RecorderHarness()
+        val rec = PlotRecorder(h.repository)
+        rec.updateConfig(listOf(chan("a", 0)), 10, 100, periodsIndex = 1)
+        rec.start(10)
+        h.monitorData.value = listOf(11.0, 5000.0)
+        testScheduler.advanceUntilIdle()
+        h.monitorData.value = listOf(1.0, 3.0) // kernel restarted
+        testScheduler.advanceUntilIdle()
+        assertEquals(3L, rec.sampleIdx)
+        assertEquals(listOf(1.0), rec.series("a")) // old epoch dropped
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -184,7 +214,7 @@ class PlotTest {
     // --- CSV export ---
 
     @Test
-    fun `csv has header row and aligned columns`() {
+    fun `csv has kernel_count column and aligned values`() {
         val a = PlotChannel("kernel:x", 0, "kernel", "x")
         val b = PlotChannel("dev:leg:pos", 1, "leg", "pos")
         val csv = PlotRecorder.buildCsv(
@@ -192,24 +222,39 @@ class PlotTest {
             buffers = mapOf(
                 "kernel:x" to listOf(1.0, 2.0, 3.0),
                 "dev:leg:pos" to listOf(10.0) // started later
-            )
+            ),
+            endIdx = 3000L // kernel periods_count of the newest sample
         )
         val lines = csv.trim().lines()
-        assertEquals("step,kernel.x,leg.pos", lines[0])
-        assertEquals("1,1,", lines[1])
-        assertEquals("2,2,", lines[2])
-        assertEquals("3,3,10", lines[3])
+        assertEquals("kernel_count,kernel.x,leg.pos", lines[0])
+        assertEquals("2998,1,", lines[1])
+        assertEquals("2999,2,", lines[2])
+        assertEquals("3000,3,10", lines[3])
     }
 
     @Test
     fun `csv empty when no channels`() {
-        assertEquals("", PlotRecorder.buildCsv(emptyList(), emptyMap()))
+        assertEquals("", PlotRecorder.buildCsv(emptyList(), emptyMap(), 0L))
     }
 
     @Test
     fun `csv quotes names containing commas`() {
         val ch = PlotChannel("dev:a:b, c", 0, "a", "b, c")
-        val csv = PlotRecorder.buildCsv(listOf(ch), mapOf("dev:a:b, c" to listOf(1.5)))
+        val csv = PlotRecorder.buildCsv(listOf(ch), mapOf("dev:a:b, c" to listOf(1.5)), 42L)
         assertTrue(csv.lines()[0].contains("\"a.b, c\""))
+        assertEquals("42,1.5", csv.trim().lines()[1])
+    }
+
+    @Test
+    fun `registry finds periods_count index`() {
+        val headers = HeadersResponseDto(
+            kernel = listOf("state", "periods_count"),
+            bus = null,
+            extra = emptyList()
+        )
+        assertEquals(1, PlotChannels.periodsIndex(headers))
+        assertEquals(-1, PlotChannels.periodsIndex(null))
+        val other = HeadersResponseDto(kernel = listOf("state"), bus = null, extra = emptyList())
+        assertEquals(-1, PlotChannels.periodsIndex(other))
     }
 }

@@ -89,7 +89,12 @@ fun ButtonEditorScreen(
                     uiState.availableEvents.forEach { event ->
                         AssistChip(
                             onClick = { viewModel.addButton(event) },
-                            label = { Text(event, fontSize = 11.sp) },
+                            label = {
+                                Text(
+                                    "${ButtonLayouts.prettifyLabel(event)} ($event)",
+                                    fontSize = 11.sp
+                                )
+                            },
                             leadingIcon = if (event in addedEvents) {
                                 { Icon(Icons.Default.Check, null, Modifier.size(14.dp)) }
                             } else null

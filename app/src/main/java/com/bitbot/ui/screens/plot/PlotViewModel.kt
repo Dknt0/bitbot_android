@@ -46,9 +46,17 @@ data class PlotUiState(
     val horizonSeconds: Int = Constants.Plot.DEFAULT_HORIZON_SECONDS,
     val isRecording: Boolean = false,
     val sampleIdx: Long = 0,
-    val hasData: Boolean = false
+    val hasData: Boolean = false,
+    /** Kernel control-loop periods per second; 0 until measured after recording starts. */
+    val periodsPerSecond: Double = 0.0
 ) {
-    val horizonSamples: Int get() = rateHz * horizonSeconds
+    /**
+     * Follow-window width in x (kernel periods) for the configured horizon.
+     * Poll-rate independent: a higher rate only adds more points per window.
+     */
+    val horizonSpanX: Float
+        get() = if (periodsPerSecond > 0.0) (periodsPerSecond * horizonSeconds).toFloat()
+        else 1000f // pre-measurement placeholder; replaced within ~1s of recording
 }
 
 @HiltViewModel
@@ -91,6 +99,7 @@ class PlotViewModel @Inject constructor(
 
             val keyToChannel = registry.associateBy { it.key }
             val selected = savedKeys.mapNotNull { keyToChannel[it] }
+            val periodsIdx = PlotChannels.periodsIndex(repository.headers)
 
             _uiState.value = PlotUiState(
                 registry = registry,
@@ -98,7 +107,7 @@ class PlotViewModel @Inject constructor(
                 rateHz = rate,
                 horizonSeconds = horizon
             )
-            recorder.updateConfig(selected, rate, rate * horizon)
+            recorder.updateConfig(selected, rate, rate * horizon, periodsIdx)
         }
 
         viewModelScope.launch {
@@ -106,12 +115,20 @@ class PlotViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(isRecording = recording)
             }
         }
+        // Throttled UI-state mirror (the canvas redraws from `version` directly);
+        // avoids state churn at a 100 Hz sample rate.
         viewModelScope.launch {
+            var lastUpdate = 0L
             recorder.version.collect {
-                _uiState.value = _uiState.value.copy(
-                    sampleIdx = recorder.sampleIdx,
-                    hasData = recorder.sampleIdx > 0
-                )
+                val now = System.currentTimeMillis()
+                if (now - lastUpdate >= 200) {
+                    lastUpdate = now
+                    _uiState.value = _uiState.value.copy(
+                        sampleIdx = recorder.sampleIdx,
+                        hasData = recorder.sampleIdx > 0,
+                        periodsPerSecond = recorder.periodsPerSecond
+                    )
+                }
             }
         }
     }
@@ -122,7 +139,7 @@ class PlotViewModel @Inject constructor(
             recorder.pause()
         } else {
             if (s.selected.isEmpty()) return
-            recorder.updateConfig(s.selected, s.rateHz, s.horizonSamples)
+            recorder.updateConfig(s.selected, s.rateHz, s.rateHz * s.horizonSeconds)
             recorder.start(s.rateHz)
         }
     }
@@ -136,21 +153,21 @@ class PlotViewModel @Inject constructor(
         val keyToChannel = _uiState.value.registry.associateBy { it.key }
         val selected = keys.mapNotNull { keyToChannel[it] }
         _uiState.value = _uiState.value.copy(selected = selected)
-        recorder.updateConfig(selected, _uiState.value.rateHz, _uiState.value.horizonSamples)
+        recorder.updateConfig(selected, _uiState.value.rateHz, _uiState.value.rateHz * _uiState.value.horizonSeconds)
     }
 
     fun setRate(rateHz: Int) {
         if (rateHz !in Constants.Plot.RATE_CHOICES_HZ) return
         viewModelScope.launch { dataStore.edit { it[RATE_KEY] = rateHz } }
         _uiState.value = _uiState.value.copy(rateHz = rateHz)
-        recorder.updateConfig(_uiState.value.selected, rateHz, _uiState.value.horizonSamples)
+        recorder.updateConfig(_uiState.value.selected, rateHz, rateHz * _uiState.value.horizonSeconds)
     }
 
     fun setHorizon(seconds: Int) {
         val h = seconds.coerceIn(Constants.Plot.MIN_HORIZON_SECONDS, Constants.Plot.MAX_HORIZON_SECONDS)
         viewModelScope.launch { dataStore.edit { it[HORIZON_KEY] = h } }
         _uiState.value = _uiState.value.copy(horizonSeconds = h)
-        recorder.updateConfig(_uiState.value.selected, _uiState.value.rateHz, _uiState.value.horizonSamples)
+        recorder.updateConfig(_uiState.value.selected, _uiState.value.rateHz, _uiState.value.rateHz * _uiState.value.horizonSeconds)
     }
 
     fun clearData() = recorder.clear()
@@ -165,7 +182,7 @@ class PlotViewModel @Inject constructor(
         if (s.selected.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             val buffers = s.selected.associate { it.key to recorder.series(it.key) }
-            val csv = PlotRecorder.buildCsv(s.selected, buffers)
+            val csv = PlotRecorder.buildCsv(s.selected, buffers, recorder.sampleIdx)
             val uri = writeMediaStore("csv", "text/csv") { os -> os.write(csv.toByteArray(Charsets.UTF_8)) }
             _saveMessage.value = if (uri != null) "Saved CSV to Downloads/Bitbot" else "CSV save failed"
         }

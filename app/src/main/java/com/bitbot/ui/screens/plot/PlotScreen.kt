@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Tune
@@ -43,6 +45,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -62,8 +65,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.widget.Toast
 import com.bitbot.data.model.ConnectionState
@@ -263,7 +269,7 @@ fun PlotScreen(
                     state = viewState,
                     version = version,
                     sampleIdx = uiState.sampleIdx,
-                    horizonSamples = uiState.horizonSamples,
+                    horizonSpanX = uiState.horizonSpanX,
                     seriesProvider = ::seriesProvider,
                     modifier = Modifier
                         .fillMaxSize()
@@ -393,6 +399,12 @@ private fun LegendChip(
     }
 }
 
+/**
+ * Full-screen channel picker. Channels are grouped (kernel / each device /
+ * extra) into collapsible tree nodes — tap a group to reveal its channels.
+ * Group rows offer a tri-state select-all checkbox; the search box switches
+ * to a flat filtered list across all groups.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChannelPickerDialog(
@@ -404,77 +416,164 @@ private fun ChannelPickerDialog(
     // Local ordered selection: existing order preserved, new picks appended
     val selectedKeys = remember { mutableStateListOf<String>().also { it.addAll(initialSelection) } }
     var search by remember { mutableStateOf("") }
+    val expandedGroups = remember { mutableStateListOf<String>() }
 
-    val filtered = remember(search, registry) {
-        if (search.isBlank()) registry
-        else registry.filter {
-            it.name.contains(search, ignoreCase = true) || it.group.contains(search, ignoreCase = true)
-        }
-    }
-    val grouped = remember(filtered) {
-        filtered.groupBy { it.group } // LinkedHashMap preserves registry order
+    val groups: Map<String, List<PlotChannel>> = remember(registry) {
+        registry.groupBy { it.group } // LinkedHashMap preserves registry order
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Select channels (${selectedKeys.size})") },
-        text = {
-            Column {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Select channels (${selectedKeys.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(4.dp))
+                    Button(onClick = { onConfirm(selectedKeys.toList()) }) { Text("OK") }
+                }
+
                 OutlinedTextField(
                     value = search,
                     onValueChange = { search = it },
-                    label = { Text("Search") },
+                    label = { Text("Search (flat list)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(8.dp))
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 320.dp)
-                ) {
-                    grouped.forEach { (group, channels) ->
-                        item(key = "header_$group") {
-                            Text(
-                                group,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
-                            )
+                Spacer(Modifier.height(6.dp))
+
+                if (search.isNotBlank()) {
+                    // Flat search results across all groups
+                    val matches = remember(search, registry) {
+                        registry.filter {
+                            it.name.contains(search, true) || it.group.contains(search, true)
                         }
-                        items(channels.size) { i ->
-                            val ch = channels[i]
-                            val checked = ch.key in selectedKeys
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        if (checked) selectedKeys.remove(ch.key)
-                                        else selectedKeys.add(ch.key)
-                                    }
+                    }
+                    Text(
+                        "${matches.size} matches",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(matches.size) { i ->
+                            val ch = matches[i]
+                            CheckRow(
+                                title = ch.name,
+                                subtitle = ch.group,
+                                checked = ch.key in selectedKeys
                             ) {
-                                Checkbox(
-                                    checked = checked,
-                                    onCheckedChange = {
-                                        if (checked) selectedKeys.remove(ch.key)
+                                if (ch.key in selectedKeys) selectedKeys.remove(ch.key)
+                                else selectedKeys.add(ch.key)
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        groups.forEach { (group, channels) ->
+                            val selectedCount = channels.count { it.key in selectedKeys }
+                            item(key = "group_$group") {
+                                val expanded = group in expandedGroups
+                                val toggleState = when {
+                                    selectedCount == channels.size -> ToggleableState.On
+                                    selectedCount == 0 -> ToggleableState.Off
+                                    else -> ToggleableState.Indeterminate
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    TriStateCheckbox(
+                                        state = toggleState,
+                                        onClick = {
+                                            val selectAll = toggleState != ToggleableState.On
+                                            channels.forEach { ch ->
+                                                selectedKeys.remove(ch.key)
+                                                if (selectAll) selectedKeys.add(ch.key)
+                                            }
+                                        }
+                                    )
+                                    Text(
+                                        "$group  ($selectedCount/${channels.size})",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                if (expanded) expandedGroups.remove(group)
+                                                else expandedGroups.add(group)
+                                            }
+                                    )
+                                    IconButton(onClick = {
+                                        if (expanded) expandedGroups.remove(group)
+                                        else expandedGroups.add(group)
+                                    }) {
+                                        Icon(
+                                            if (expanded) Icons.Default.KeyboardArrowDown
+                                            else Icons.Default.KeyboardArrowRight,
+                                            contentDescription = if (expanded) "Collapse" else "Expand",
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            if (group in expandedGroups) {
+                                items(channels.size, key = { "ch_${group}_$it" }) { i ->
+                                    val ch = channels[i]
+                                    CheckRow(
+                                        title = ch.name,
+                                        subtitle = null,
+                                        checked = ch.key in selectedKeys,
+                                        indent = true
+                                    ) {
+                                        if (ch.key in selectedKeys) selectedKeys.remove(ch.key)
                                         else selectedKeys.add(ch.key)
                                     }
-                                )
-                                Text(ch.name, fontSize = 13.sp, maxLines = 1)
+                                }
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(selectedKeys.toList()) }) { Text("OK") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
-    )
+    }
+}
+
+@Composable
+private fun CheckRow(
+    title: String,
+    subtitle: String?,
+    checked: Boolean,
+    indent: Boolean = false,
+    onToggle: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(start = if (indent) 28.dp else 4.dp)
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Spacer(Modifier.width(4.dp))
+        if (subtitle != null) {
+            Text(subtitle, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(title, fontSize = 13.sp, maxLines = 1)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
