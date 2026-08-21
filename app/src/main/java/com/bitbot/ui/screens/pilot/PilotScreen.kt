@@ -7,6 +7,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,19 +22,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.bitbot.data.model.ButtonConfig
 import com.bitbot.data.model.ConnectionState
 import com.bitbot.ui.screens.pilot.components.VirtualJoystick
+import com.bitbot.util.Constants.ButtonEvents
 import com.bitbot.util.Constants.PolicyMode
 
 @Composable
 fun PilotScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToButtonEditor: () -> Unit,
     viewModel: PilotViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -127,6 +134,13 @@ fun PilotScreen(
             Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4CAF50)))
             Spacer(Modifier.width(4.dp))
             Text("Connected", fontSize = 10.sp, color = Color(0xFF4CAF50))
+            Spacer(Modifier.width(8.dp))
+            IconButton(
+                onClick = onNavigateToButtonEditor,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(Icons.Default.Tune, "Edit buttons", modifier = Modifier.size(18.dp))
+            }
         }
 
         // Top-center: Policy mode badge
@@ -175,7 +189,7 @@ fun PilotScreen(
             }
         }
 
-        // --- Main controls row ---
+        // --- Joysticks (fixed) ---
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -198,75 +212,8 @@ fun PilotScreen(
                 )
             }
 
-            // CENTER: Action + Policy buttons + E-STOP
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(0.65f).fillMaxHeight(),
-                verticalArrangement = Arrangement.Center
-            ) {
-                // Action buttons: 2x2 grid
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    ActionBtn("PowerOn", Icons.Default.PowerSettingsNew, Color(0xFF4CAF50), Modifier.weight(1f)) {
-                        viewModel.onPressY()
-                    }
-                    ActionBtn("InitPose", Icons.Default.AccessibilityNew, Color(0xFF9C27B0), Modifier.weight(1f)) {
-                        viewModel.onPressA()
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    ActionBtn("Start", Icons.Default.PlayArrow, Color(0xFF2196F3), Modifier.weight(1f)) {
-                        viewModel.onPressB()
-                    }
-                    ActionBtn("Run", Icons.Default.DirectionsRun, Color(0xFFFF9800), Modifier.weight(1f)) {
-                        viewModel.onRunPolicy()
-                    }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // Policy buttons: row of FilterChips
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    PolicyBtn("Stand", PolicyMode.STANDING, uiState.policyMode, Modifier.weight(1f)) {
-                        viewModel.onPressX()
-                    }
-                    PolicyBtn("Walk", PolicyMode.WALKING, uiState.policyMode, Modifier.weight(1f)) {
-                        viewModel.onPressLB()
-                    }
-                    PolicyBtn("Robust", PolicyMode.ROBUST, uiState.policyMode, Modifier.weight(1f)) {
-                        viewModel.onPressRB()
-                    }
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                // E-STOP
-                Button(
-                    onClick = { viewModel.onRightTrigger(1f) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                        tint = Color.White
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("E-STOP", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color.White)
-                }
-            }
+            // Reserved center area (configurable buttons float here, see below)
+            Spacer(Modifier.weight(0.65f).fillMaxHeight())
 
             // RIGHT: Move joystick
             Column(
@@ -281,65 +228,95 @@ fun PilotScreen(
                 )
             }
         }
+
+        // --- User-configurable buttons (free position over the whole panel) ---
+        val activePolicyEvent = ButtonEvents.eventForPolicyMode(uiState.policyMode)
+        uiState.buttons.forEach { config ->
+            ConfigurableButton(
+                config = config,
+                isActive = config.eventName == activePolicyEvent,
+                onPress = { viewModel.onButtonPress(config.eventName) },
+                onRelease = { viewModel.onButtonRelease(config.eventName) },
+                modifier = Modifier.align(BiasAlignment(config.x * 2f - 1f, config.y * 2f - 1f))
+            )
+        }
+
+        // --- E-STOP (fixed safety control) ---
+        Button(
+            onClick = viewModel::onStopPress,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp)
+                .fillMaxWidth(0.22f)
+                .height(52.dp),
+            contentPadding = PaddingValues(horizontal = 24.dp)
+        ) {
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                modifier = Modifier.size(22.dp),
+                tint = Color.White
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("E-STOP", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color.White)
+        }
     }
 }
 
+/**
+ * A user-configured control button. Press sends event value 1 (key Down),
+ * release sends value 2 (key Up). The button matching the active policy mode
+ * is rendered highlighted.
+ */
 @Composable
-private fun ActionBtn(
-    label: String,
-    icon: ImageVector,
-    color: Color,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
+private fun ConfigurableButton(
+    config: ButtonConfig,
+    isActive: Boolean,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    FilledTonalButton(
-        onClick = onClick,
-        modifier = modifier.height(42.dp),
-        colors = ButtonDefaults.filledTonalButtonColors(
-            containerColor = color.copy(alpha = 0.15f),
-            contentColor = color
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val color = Color(config.colorARGB)
+    val container = when {
+        pressed -> color.copy(alpha = 0.55f)
+        isActive -> color
+        else -> color.copy(alpha = 0.16f)
+    }
+    val content = if (pressed || isActive) Color.White else color
+    val fontSize = (config.sizeDp * 0.16f).coerceIn(8f, 18f).sp
+
+    Button(
+        onClick = {},
+        modifier = modifier.size(
+            width = config.sizeDp.dp,
+            height = (config.sizeDp * ButtonConfig.HEIGHT_RATIO).dp
         ),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        interactionSource = interactionSource,
+        colors = ButtonDefaults.buttonColors(containerColor = container, contentColor = content),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
         shape = RoundedCornerShape(10.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp))
-        Spacer(Modifier.width(3.dp))
-        Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(
+            config.label,
+            fontSize = fontSize,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PolicyBtn(
-    label: String,
-    mode: PolicyMode,
-    activeMode: PolicyMode,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val isActive = mode == activeMode
-    val color = policyColor(mode)
-
-    FilterChip(
-        selected = isActive,
-        onClick = onClick,
-        label = {
-            Text(
-                label,
-                fontSize = 10.sp,
-                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 1
-            )
-        },
-        modifier = modifier.height(38.dp),
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = color,
-            selectedLabelColor = Color.White,
-            containerColor = color.copy(alpha = 0.12f),
-            labelColor = color
-        ),
-        shape = RoundedCornerShape(10.dp)
-    )
+    LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> onPress()
+                is PressInteraction.Release, is PressInteraction.Cancel -> onRelease()
+            }
+        }
+    }
 }
 
 private fun policyColor(mode: PolicyMode): Color = when (mode) {

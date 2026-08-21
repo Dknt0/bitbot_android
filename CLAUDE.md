@@ -28,6 +28,7 @@ Bitbot-Android/
 │   │   └── NetworkModule.kt         # OkHttp, Json, RobotApi providers
 │   ├── data/
 │   │   ├── model/
+│   │   │   ├── ButtonConfig.kt      # Configurable button + layout codec + default layout
 │   │   │   ├── ConnectionState.kt
 │   │   │   ├── ControlEvent.kt
 │   │   │   └── RobotState.kt
@@ -49,6 +50,9 @@ Bitbot-Android/
 │   │   │   ├── pilot/               # Control panel (joysticks + buttons)
 │   │   │   │   ├── PilotScreen.kt
 │   │   │   │   ├── PilotViewModel.kt
+│   │   │   │   ├── editor/          # Button layout editor (add/move/size/color)
+│   │   │   │   │   ├── ButtonEditorScreen.kt
+│   │   │   │   │   └── ButtonEditorViewModel.kt
 │   │   │   │   └── components/
 │   │   │   │       └── VirtualGamepad.kt   # Joystick with raw pointer tracking
 │   │   │   ├── data/                # Realtime data monitoring panel
@@ -75,8 +79,10 @@ Bitbot-Android/
 {"type":"events","data":"{\"events\":[{\"name\":\"EVENT\",\"value\":N}]}"}
 ```
 
-### Button Events: value `1` (fire) or `2` (toggle)
+### Button Events: value `1` (key Down / press) or `2` (key Up / release)
 `stop`, `power_on`, `start`, `init_pose`, `run_policy`, `enable_standing_policy`, `enable_warking_policy`, `enable_robust_policy`, `nav_trigger`, `enable_record`
+
+Configurable panel buttons send Down on press and Up on release (like the desktop reference frontend; `start` only acts on Up). Internal events (`policy_switch`, `velo_*`, `set_vel_*`) are never user buttons — see `Constants.ButtonEvents.isButtonEvent` allow-list. The server's full event list comes from HTTP `GET /setting/control/get` (`List<ControlMappingDto>`), fetched by `RobotRepository.connect()`.
 
 ### Velocity Events: value is `Double.toBits()` (int64 bitcast)
 - `set_vel_x`, `set_vel_y`, `set_vel_w` — sent at 100Hz
@@ -89,7 +95,7 @@ Bitbot-Android/
 - **Headers** fetched via HTTP `GET /monitor/headers` — returns `HeadersResponseDto { kernel, bus { devices [{ name, type, headers }] }, extra }`
 - **State names** from HTTP `GET /monitor/stateslist` — maps state IDs to human-readable names
 
-### Gamepad → Event Mapping (from bitbot_frontend.hpp)
+### Gamepad → Event Mapping (from bitbot_frontend.hpp; the app's default button layout mirrors it, except PowerOn no longer auto-sends `enable_record` — add a separate Record button if needed)
 | Gamepad | Event | Value |
 |---|---|---|
 | A | `init_pose` | Fire (1) |
@@ -118,7 +124,7 @@ These limits are configurable via Settings (persisted in DataStore). Keys: `Velo
 ## Build & Install
 
 ```bash
-cd /home/dknt/Project/mobile/Bitbot-Android
+cd /home/dknt/Project/bitbot_android
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -128,11 +134,14 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - Layout values (size, maxDragPx) are **state variables** read dynamically inside pointerInput — NOT captured as immutable vals
 - Connection retry: `WebSocketClient.disconnect()` clears `webSocket=null, currentUrl=null` so reconnect works after failure
 - `onFailure`/`onClosing`/`onClosed` all reset state to allow fresh connections
-- **PilotScreen layout**: Landscape gamepad — left Yaw joystick, center button panel (2x2 actions + 3 policy chips + E-STOP), right Move joystick
+- **PilotScreen layout**: Landscape gamepad — left Yaw joystick, right Move joystick (fixed), E-STOP fixed at bottom center, plus user-configurable buttons positioned freely over the panel (normalized x/y → `BiasAlignment`). Buttons persist as JSON in DataStore key `button_layout` (`ButtonConfig` list via `ButtonLayoutCodec`); falls back to `ButtonLayouts.defaultLayout()` until the user saves a layout.
+- **Configurable buttons**: press sends value `1` (Down), release sends `2` (Up), detected via `PressInteraction` on the button's `interactionSource`. Buttons whose event maps to a `PolicyMode` switch the local mode (velocity limits) and render highlighted when active. Which events may become buttons is decided by the allow-list `Constants.ButtonEvents.isButtonEvent` (fixed set + `enable_.+_policy` regex).
+- **Button editor** (`button_editor` route, Tune icon on pilot top bar): only meaningful while connected — the add-list comes from `RobotRepository.availableEvents()` (server `/setting/control/get`, fetched on `connect()`; hardcoded fallback). Edits are in-memory until Save writes to DataStore; `PilotViewModel` observes the DataStore key so changes apply on return.
+- **Numeric settings fields** (`DecimalField`/`IntField` in `ui/components/NumberFields.kt`): keep raw text state, select-all on focus, commit parsed values on change, reformat only when unfocused — never round-trip text through the stored value.
 - **Velocity config**: 18 DataStore keys (3 policies × 3 axes × pos/neg), `SettingsUiState.velConfig` is a `Map<String, Double>`, `PilotViewModel` caches 6 values per active policy mode
 - **scaleVelocity**: `scaleVelocity(input, posLimit, negLimit)` — input > 0 → input × posLimit, input < 0 → input × negLimit, input == 0 → 0.0. Guards against -0.0 via `if (result == 0.0) 0.0`.
 - **Computed velocities** in `PilotUiState` (`velX`, `velY`, `velW`) updated every 100Hz tick, used by debug panel
-- **Start button** uses `TOGGLE` (value 2), all other buttons use `FIRE` (value 1)
+- **Start button** acts on release (kernel `start` only fires on key Up); all buttons send Down+Up pairs
 - **Data panel** fetches headers via HTTP (`/monitor/headers`) and polls `request_data` at 10Hz only when active. `startDataPolling()`/`stopDataPolling()` called from `DataViewModel` init/onCleared. Connection state observer retries polling on reconnect.
 - **PanelSwitcher**: Tap-to-toggle FAB at bottom-left, switches between Pilot and Data panels. Uses `AnimatedVisibility` with horizontal slide.
 - **PanelHostScreen**: Wraps PilotScreen and DataScreen as switchable composables. Route: `panel_host/{initialPanel}`.

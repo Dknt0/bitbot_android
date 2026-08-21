@@ -15,6 +15,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.bitbot.data.model.ConnectionState
+import com.bitbot.ui.components.IntField
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,17 +94,12 @@ fun HomeScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                     )
 
-                    OutlinedTextField(
-                        value = uiState.port.toString(),
-                        onValueChange = {
-                            it.toIntOrNull()?.let { port ->
-                                viewModel.updatePort(port)
-                            }
-                        },
+                    IntField(
+                        value = uiState.port,
+                        onValueChange = { viewModel.updatePort(it) },
                         label = { Text("Port") },
-                        singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        validRange = 1..65535
                     )
 
                     // Action Buttons

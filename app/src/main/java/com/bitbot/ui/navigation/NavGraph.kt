@@ -10,6 +10,7 @@ import androidx.navigation.navArgument
 import com.bitbot.ui.components.PanelType
 import com.bitbot.ui.screens.PanelHostScreen
 import com.bitbot.ui.screens.home.HomeScreen
+import com.bitbot.ui.screens.pilot.editor.ButtonEditorScreen
 import com.bitbot.ui.screens.settings.SettingsScreen
 
 sealed class Screen(val route: String) {
@@ -18,6 +19,7 @@ sealed class Screen(val route: String) {
         fun createRoute(initialPanel: String = "PILOT"): String = "panel_host/$initialPanel"
     }
     data object Settings : Screen("settings")
+    data object ButtonEditor : Screen("button_editor")
 }
 
 @Composable
@@ -44,12 +46,19 @@ fun NavGraph(
             val initialPanel = try { PanelType.valueOf(initialPanelName) } catch (_: Exception) { PanelType.PILOT }
             PanelHostScreen(
                 onNavigateBack = { navController.popBackStack() },
+                onNavigateToButtonEditor = { navController.navigate(Screen.ButtonEditor.route) },
                 initialPanel = initialPanel
             )
         }
 
         composable(Screen.Settings.route) {
             SettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.ButtonEditor.route) {
+            ButtonEditorScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

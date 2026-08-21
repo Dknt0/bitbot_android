@@ -19,13 +19,17 @@ import com.bitbot.ui.screens.pilot.PilotScreen
 @Composable
 fun PanelHostScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToButtonEditor: () -> Unit,
     initialPanel: PanelType = PanelType.PILOT
 ) {
     var activePanel by remember { mutableStateOf(initialPanel) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (activePanel) {
-            PanelType.PILOT -> PilotScreen(onNavigateBack = onNavigateBack)
+            PanelType.PILOT -> PilotScreen(
+                onNavigateBack = onNavigateBack,
+                onNavigateToButtonEditor = onNavigateToButtonEditor
+            )
             PanelType.DATA -> DataScreen(onNavigateBack = onNavigateBack)
         }
 

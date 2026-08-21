@@ -8,6 +8,7 @@ object Constants {
         const val HOST = "host"
         const val PORT = "port"
         const val AUTO_CONNECT = "auto_connect"
+        const val BUTTON_LAYOUT = "button_layout"
     }
 
     /** DataStore keys for configurable max velocity per policy mode (pos/neg per axis). */
@@ -83,9 +84,60 @@ object Constants {
         const val SET_VEL_W = "set_vel_w"
     }
 
+    /**
+     * Event values follow kernel key semantics (types.hpp):
+     * 1 = key Down (press), 2 = key Up (release).
+     * Note: "start" only acts on UP, fire-type events act on DOWN.
+     */
     object ButtonValue {
-        const val FIRE = 1L
-        const val TOGGLE = 2L
+        const val DOWN = 1L
+        const val UP = 2L
+    }
+
+    /**
+     * Which server events may become configurable buttons. Allow-list: internal
+     * events (policy_switch, velo_*, set_vel_*, nav_trigger, ...) never appear.
+     */
+    object ButtonEvents {
+        val FIXED_EVENTS = setOf(
+            Events.STOP,
+            Events.POWER_ON,
+            Events.ENABLE_RECORD,
+            Events.START,
+            Events.INIT_POSE,
+            Events.RUN_POLICY
+        )
+        private val POLICY_EVENT_REGEX = Regex("^enable_.+_policy$")
+
+        fun isButtonEvent(name: String): Boolean =
+            name in FIXED_EVENTS || POLICY_EVENT_REGEX.matches(name)
+
+        /** Event that switches the app-local policy mode (drives velocity limits). */
+        fun policyModeForEvent(name: String): PolicyMode? = when (name) {
+            Events.ENABLE_STANDING_POLICY -> PolicyMode.STANDING
+            Events.ENABLE_WARKING_POLICY -> PolicyMode.WALKING
+            Events.ENABLE_ROBUST_POLICY -> PolicyMode.ROBUST
+            else -> null
+        }
+
+        fun eventForPolicyMode(mode: PolicyMode): String = when (mode) {
+            PolicyMode.STANDING -> Events.ENABLE_STANDING_POLICY
+            PolicyMode.WALKING -> Events.ENABLE_WARKING_POLICY
+            PolicyMode.ROBUST -> Events.ENABLE_ROBUST_POLICY
+        }
+
+        /** Fallback when the server control list could not be fetched. */
+        val FALLBACK_EVENTS: List<String> = listOf(
+            Events.STOP,
+            Events.POWER_ON,
+            Events.ENABLE_RECORD,
+            Events.START,
+            Events.INIT_POSE,
+            Events.RUN_POLICY,
+            Events.ENABLE_STANDING_POLICY,
+            Events.ENABLE_WARKING_POLICY,
+            Events.ENABLE_ROBUST_POLICY
+        )
     }
 
     /**

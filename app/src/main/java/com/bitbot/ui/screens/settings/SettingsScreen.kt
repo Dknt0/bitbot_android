@@ -2,7 +2,6 @@ package com.bitbot.ui.screens.settings
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -11,9 +10,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.bitbot.ui.components.DecimalField
+import com.bitbot.ui.components.IntField
 import com.bitbot.util.Constants.PolicyMode
 import com.bitbot.util.Constants.VelocityPrefs
 
@@ -62,17 +62,12 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         leadingIcon = { Icon(Icons.Default.Computer, null) }
                     )
-                    OutlinedTextField(
-                        value = uiState.port.toString(),
-                        onValueChange = { text ->
-                            text.toIntOrNull()?.let { port ->
-                                if (port in 1..65535) viewModel.updatePort(port)
-                            }
-                        },
+                    IntField(
+                        value = uiState.port,
+                        onValueChange = { viewModel.updatePort(it) },
                         label = { Text("Port") },
-                        singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        validRange = 1..65535,
                         leadingIcon = { Icon(Icons.Default.SettingsEthernet, null) }
                     )
                     Row(
@@ -201,22 +196,18 @@ private fun AxisRow(
             style = MaterialTheme.typography.labelMedium,
             fontFamily = FontFamily.Monospace
         )
-        OutlinedTextField(
-            value = "%.2f".format(posValue),
-            onValueChange = { text -> text.toDoubleOrNull()?.let(onPosUpdate) },
+        DecimalField(
+            value = posValue,
+            onValueChange = onPosUpdate,
             label = { Text("+", fontSize = MaterialTheme.typography.labelSmall.fontSize) },
-            singleLine = true,
             modifier = Modifier.weight(1f),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace)
         )
-        OutlinedTextField(
-            value = "%.2f".format(negValue),
-            onValueChange = { text -> text.toDoubleOrNull()?.let(onNegUpdate) },
+        DecimalField(
+            value = negValue,
+            onValueChange = onNegUpdate,
             label = { Text("-", fontSize = MaterialTheme.typography.labelSmall.fontSize) },
-            singleLine = true,
             modifier = Modifier.weight(1f),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace)
         )
     }

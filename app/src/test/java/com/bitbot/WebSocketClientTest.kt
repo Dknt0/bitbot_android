@@ -1,6 +1,5 @@
 package com.bitbot
 
-import com.bitbot.data.model.ControlEvent
 import com.bitbot.data.remote.websocket.WebSocketClient
 import com.bitbot.data.remote.websocket.WebSocketState
 import kotlinx.serialization.json.Json
@@ -21,7 +20,7 @@ class WebSocketClientTest {
     @Before
     fun setup() {
         val okHttpClient = OkHttpClient.Builder().build()
-        client = WebSocketClient(json, okHttpClient)
+        client = WebSocketClient(okHttpClient, json)
     }
 
     @After
@@ -41,8 +40,8 @@ class WebSocketClientTest {
     }
 
     @Test
-    fun `sendEvents does not throw when not connected`() {
-        client.sendEvents(listOf(ControlEvent("TEST", 1.0)))
+    fun `sendVelocityEvents does not throw when not connected`() {
+        client.sendVelocityEvents(listOf("set_vel_x" to 1.0))
         // Should not throw
     }
 }

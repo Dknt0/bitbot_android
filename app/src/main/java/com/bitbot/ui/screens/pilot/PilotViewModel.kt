@@ -3,12 +3,17 @@ package com.bitbot.ui.screens.pilot
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.doublePreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.bitbot.data.model.ButtonConfig
+import com.bitbot.data.model.ButtonLayoutCodec
+import com.bitbot.data.model.ButtonLayouts
 import com.bitbot.data.model.ConnectionState
 import com.bitbot.data.repository.RobotRepository
 import com.bitbot.util.Constants
 import com.bitbot.util.Constants.ButtonValue
+import com.bitbot.util.Constants.ButtonEvents
 import com.bitbot.util.Constants.Events
 import com.bitbot.util.Constants.PolicyMode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -18,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -30,10 +36,10 @@ data class PilotUiState(
     val rightJoystickX: Float = 0f,
     val rightJoystickY: Float = 0f,
     val policyMode: PolicyMode = PolicyMode.STANDING,
-    val isPolicyRunning: Boolean = false,
     val velX: Double = 0.0,
     val velY: Double = 0.0,
-    val velW: Double = 0.0
+    val velW: Double = 0.0,
+    val buttons: List<ButtonConfig> = emptyList()
 )
 
 @HiltViewModel
@@ -61,6 +67,7 @@ class PilotViewModel @Inject constructor(
     init {
         loadVelocityConfig()
         startVelocityLoop()
+        observeButtonLayout()
     }
 
     private fun loadVelocityConfig() {
@@ -79,6 +86,21 @@ class PilotViewModel @Inject constructor(
             velYNeg = prefs[doublePreferencesKey(keys.yNeg)] ?: mode.defaultVelYNeg
             velYawPos = prefs[doublePreferencesKey(keys.yawPos)] ?: mode.defaultVelYawPos
             velYawNeg = prefs[doublePreferencesKey(keys.yawNeg)] ?: mode.defaultVelYawNeg
+        }
+    }
+
+    /** Saved layout from DataStore; falls back to the default layout until events are known. */
+    private fun observeButtonLayout() {
+        viewModelScope.launch {
+            combine(
+                dataStore.data,
+                repository.eventListVersion
+            ) { prefs, _ -> prefs[stringPreferencesKey(Constants.Preferences.BUTTON_LAYOUT)] }
+                .collect { raw ->
+                    val buttons = raw?.let { ButtonLayoutCodec.decode(it) }
+                        ?: ButtonLayouts.defaultLayout(repository.availableEvents())
+                    _uiState.value = _uiState.value.copy(buttons = buttons)
+                }
         }
     }
 
@@ -114,47 +136,24 @@ class PilotViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(rightJoystickX = x, rightJoystickY = y)
     }
 
-    // --- Button Actions ---
-    fun onPressA() {
-        repository.sendButtonEvent(Events.INIT_POSE, ButtonValue.FIRE)
-    }
-
-    fun onPressB() {
-        repository.sendButtonEvent(Events.START, ButtonValue.TOGGLE)
-    }
-
-    fun onPressX() {
-        repository.sendButtonEvent(Events.ENABLE_STANDING_POLICY, ButtonValue.FIRE)
-        _uiState.value = _uiState.value.copy(policyMode = PolicyMode.STANDING)
-        refreshVelocityConfig(PolicyMode.STANDING)
-    }
-
-    fun onPressY() {
-        repository.sendButtonEvent(Events.ENABLE_RECORD, ButtonValue.FIRE)
-        repository.sendButtonEvent(Events.POWER_ON, ButtonValue.FIRE)
-    }
-
-    fun onPressLB() {
-        repository.sendButtonEvent(Events.ENABLE_WARKING_POLICY, ButtonValue.FIRE)
-        _uiState.value = _uiState.value.copy(policyMode = PolicyMode.WALKING)
-        refreshVelocityConfig(PolicyMode.WALKING)
-    }
-
-    fun onPressRB() {
-        repository.sendButtonEvent(Events.ENABLE_ROBUST_POLICY, ButtonValue.FIRE)
-        _uiState.value = _uiState.value.copy(policyMode = PolicyMode.ROBUST)
-        refreshVelocityConfig(PolicyMode.ROBUST)
-    }
-
-    fun onRightTrigger(value: Float) {
-        if (value > 0.9f) {
-            repository.sendButtonEvent(Events.STOP, ButtonValue.FIRE)
+    // --- Configurable Buttons ---
+    // Press sends value 1 (key Down), release sends value 2 (key Up) — matches
+    // the desktop reference frontend; every event type acts correctly.
+    fun onButtonPress(event: String) {
+        repository.sendButtonEvent(event, ButtonValue.DOWN)
+        ButtonEvents.policyModeForEvent(event)?.let { mode ->
+            _uiState.value = _uiState.value.copy(policyMode = mode)
+            refreshVelocityConfig(mode)
         }
     }
 
-    fun onRunPolicy() {
-        repository.sendButtonEvent(Events.RUN_POLICY, ButtonValue.FIRE)
-        _uiState.value = _uiState.value.copy(isPolicyRunning = true)
+    fun onButtonRelease(event: String) {
+        repository.sendButtonEvent(event, ButtonValue.UP)
+    }
+
+    /** E-STOP: fixed safety control, always sends stop immediately on press. */
+    fun onStopPress() {
+        repository.sendButtonEvent(Events.STOP, ButtonValue.DOWN)
     }
 
     fun disconnect() {

@@ -3,6 +3,7 @@ package com.bitbot.data.repository
 import android.util.Log
 import com.bitbot.data.model.ConnectionState
 import com.bitbot.data.remote.api.RobotApi
+import com.bitbot.data.remote.dto.ControlMappingDto
 import com.bitbot.data.remote.dto.HeadersResponseDto
 import com.bitbot.data.remote.dto.StatesListResponseDto
 import com.bitbot.data.remote.websocket.WebSocketClient
@@ -35,9 +36,16 @@ class RobotRepository @Inject constructor(
 
     val monitorData: StateFlow<List<Double>> = webSocketClient.monitorData
 
+    /** Bumped whenever the server event list is (re)fetched; lets observers re-derive default layouts. */
+    private val _eventListVersion = MutableStateFlow(0L)
+    val eventListVersion: StateFlow<Long> = _eventListVersion.asStateFlow()
+
     var headers: HeadersResponseDto? = null
         private set
     var statesList: StatesListResponseDto? = null
+        private set
+    /** Event list advertised by the server via /setting/control/get; null if not fetched. */
+    var controlMappings: List<ControlMappingDto>? = null
         private set
     var headersError: String? = null
         private set
@@ -95,6 +103,9 @@ class RobotRepository @Inject constructor(
     fun connect() {
         _connectionState.value = ConnectionState.Connecting()
         webSocketClient.connect(currentHost, currentPort)
+        // Discover the server's event list (and monitor headers) right after
+        // connecting — the button editor needs the available events.
+        scope.launch { fetchHeaders() }
     }
 
     suspend fun fetchHeaders() {
@@ -116,10 +127,21 @@ class RobotRepository @Inject constructor(
         result.getOrNull()?.let { r ->
             headers = r.headers
             statesList = r.states
+            controlMappings = r.controlMappings
+            _eventListVersion.value++
             Log.d(TAG, "fetchHeaders OK: kernel=${r.headers?.kernel?.size}, " +
-                    "devices=${r.headers?.bus?.devices?.size}, extra=${r.headers?.extra?.size}")
+                    "devices=${r.headers?.bus?.devices?.size}, extra=${r.headers?.extra?.size}, " +
+                    "events=${r.controlMappings?.size}")
         }
     }
+
+    /**
+     * Events the server offers; falls back to the known hardcoded list when the
+     * control list has not (yet) been fetched.
+     */
+    fun availableEvents(): List<String> =
+        controlMappings?.map { it.event }?.distinct()
+            ?: Constants.ButtonEvents.FALLBACK_EVENTS
 
     fun disconnect() {
         webSocketClient.disconnect()
