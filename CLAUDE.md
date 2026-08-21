@@ -121,6 +121,10 @@ Positive input scales to `posLimit`, negative input scales to `negLimit` magnitu
 
 These limits are configurable via Settings (persisted in DataStore). Keys: `VelocityPrefs.{mode}_{axis}_{pos/neg}`.
 
+## Commit Convention
+- Commits made by ZCode carry a `Co-Authored-By: ZCode <noreply@z.ai>` trailer.
+- ZCode is credited in the README Authors list (between Dknt and Claude Code); keep it there on README rewrites.
+
 ## Build & Install
 
 ```bash
