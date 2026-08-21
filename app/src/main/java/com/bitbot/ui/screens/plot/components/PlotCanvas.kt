@@ -69,6 +69,9 @@ private const val MIN_Y_SPAN = 1e-9f
  * Pure renderer on android.graphics.Canvas — used both by the live Compose
  * canvas and by the PNG export, so a saved image matches the screen exactly.
  */
+/** One legend entry drawn in exported images: color swatch + label. */
+data class LegendEntry(val colorARGB: Int, val label: String)
+
 object PlotRenderer {
 
     private val gridColor = 0xFF3A3A3A.toInt()
@@ -173,9 +176,65 @@ object PlotRenderer {
         }
     }
 
-    fun renderToBitmap(frame: PlotFrame, widthPx: Int, heightPx: Int, textScale: Float): Bitmap {
-        val bmp = Bitmap.createBitmap(max(1, widthPx), max(1, heightPx), Bitmap.Config.ARGB_8888)
-        render(frame, Canvas(bmp), bmp.width.toFloat(), bmp.height.toFloat(), textPaint(textScale))
+    fun renderToBitmap(
+        frame: PlotFrame,
+        plotWidthPx: Int,
+        plotHeightPx: Int,
+        textScale: Float,
+        legend: List<LegendEntry> = emptyList()
+    ): Bitmap {
+        val legendPaint = Paint().apply {
+            textSize = 10f * textScale
+            isAntiAlias = true
+            color = axisTextColor
+        }
+        val swatch = legendPaint.textSize
+        val gap = 6f * textScale
+        val entryGap = 14f * textScale
+        val rowH = swatch * 1.9f
+
+        // Wrap entries into rows that fit the plot width
+        val rows = mutableListOf<MutableList<Pair<LegendEntry, Float>>>()
+        var current = mutableListOf<Pair<LegendEntry, Float>>()
+        var x = 0f
+        legend.forEach { entry ->
+            val w = swatch + gap + legendPaint.measureText(entry.label) + entryGap
+            if (x + w > plotWidthPx && current.isNotEmpty()) {
+                rows += current
+                current = mutableListOf()
+                x = 0f
+            }
+            current += entry to w
+            x += w
+        }
+        if (current.isNotEmpty()) rows += current
+
+        val legendHeight = if (rows.isEmpty()) 0f else rows.size * rowH + rowH * 0.6f
+        val bmp = Bitmap.createBitmap(
+            max(1, plotWidthPx),
+            max(1, (plotHeightPx + legendHeight).toInt()),
+            Bitmap.Config.ARGB_8888
+        )
+        val canvas = Canvas(bmp)
+        canvas.drawColor(0xFF212121.toInt()) // match the on-screen dark plot background
+        render(frame, canvas, bmp.width.toFloat(), plotHeightPx.toFloat(), textPaint(textScale))
+
+        if (rows.isNotEmpty()) {
+            val separator = Paint().apply { color = gridColor; alpha = 100; strokeWidth = 1f }
+            canvas.drawLine(0f, plotHeightPx + 2f, bmp.width.toFloat(), plotHeightPx + 2f, separator)
+            var y = plotHeightPx + rowH * 0.95f
+            rows.forEach { row ->
+                var px = 8f * textScale
+                row.forEach { (entry, w) ->
+                    legendPaint.color = entry.colorARGB
+                    canvas.drawRoundRect(px, y - swatch, px + swatch, y, 2f, 2f, legendPaint)
+                    legendPaint.color = axisTextColor
+                    canvas.drawText(entry.label, px + swatch + gap, y, legendPaint)
+                    px += w
+                }
+                y += rowH
+            }
+        }
         return bmp
     }
 }

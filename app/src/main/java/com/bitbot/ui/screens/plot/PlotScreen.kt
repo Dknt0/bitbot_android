@@ -74,6 +74,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import android.widget.Toast
 import com.bitbot.data.model.ConnectionState
 import com.bitbot.data.plot.PlotChannel
+import com.bitbot.ui.screens.plot.components.LegendEntry
 import com.bitbot.ui.screens.plot.components.PlotCanvas
 import com.bitbot.ui.screens.plot.components.PlotFrame
 import com.bitbot.ui.screens.plot.components.PlotRenderer
@@ -190,8 +191,17 @@ fun PlotScreen(
                 IconButton(
                     onClick = {
                         val frame = buildFrame(viewState, ::seriesProvider, uiState.sampleIdx)
+                        val legend = uiState.selected
+                            .filter { it.key !in hiddenKeys }
+                            .map { ch ->
+                                val colorIdx = uiState.selected.indexOf(ch)
+                                LegendEntry(
+                                    Constants.Plot.colorFor(colorIdx).toInt(),
+                                    "${ch.group}.${ch.name}"
+                                )
+                            }
                         val bmp = PlotRenderer.renderToBitmap(
-                            frame, plotWidthPx, plotHeightPx, densityScale
+                            frame, plotWidthPx, plotHeightPx, densityScale, legend
                         )
                         viewModel.savePng(bmp)
                     },
