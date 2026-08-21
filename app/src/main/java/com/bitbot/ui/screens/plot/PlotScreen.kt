@@ -90,7 +90,6 @@ fun PlotScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
-    val version by viewModel.version.collectAsState()
     val saveMessage by viewModel.saveMessage.collectAsState()
     var userDisconnecting by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -190,7 +189,7 @@ fun PlotScreen(
                 }
                 IconButton(
                     onClick = {
-                        val frame = buildFrame(viewState, viewModel.xSeries(), ::seriesProvider, uiState.sampleIdx)
+                        val frame = buildFrame(viewState, viewModel.xSeries(), ::seriesProvider)
                         val legend = uiState.selected
                             .filter { it.key !in hiddenKeys }
                             .map { ch ->
@@ -277,8 +276,7 @@ fun PlotScreen(
             } else {
                 PlotCanvas(
                     state = viewState,
-                    version = version,
-                    sampleIdx = uiState.sampleIdx,
+                    versionFlow = viewModel.version,
                     horizonSpanX = uiState.horizonSpanX,
                     xsProvider = viewModel::xSeries,
                     seriesProvider = ::seriesProvider,
@@ -355,8 +353,7 @@ fun PlotScreen(
 private fun buildFrame(
     state: PlotViewState,
     xs: List<Double>,
-    seriesProvider: () -> List<PlotSeries>,
-    sampleIdx: Long
+    seriesProvider: () -> List<PlotSeries>
 ): PlotFrame {
     val series = seriesProvider()
     var yMin = state.yMin
@@ -366,7 +363,7 @@ private fun buildFrame(
             yMin = lo; yMax = hi
         }
     }
-    return PlotFrame(state.xEnd, state.xSpan, yMin, yMax, sampleIdx, xs, series)
+    return PlotFrame(state.xEnd, state.xSpan, yMin, yMax, xs, series)
 }
 
 @Composable

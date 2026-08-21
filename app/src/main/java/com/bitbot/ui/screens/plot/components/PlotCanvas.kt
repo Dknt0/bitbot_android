@@ -3,10 +3,14 @@ package com.bitbot.ui.screens.plot.components
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +24,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -42,7 +47,6 @@ class PlotFrame(
     val xSpan: Float,
     val yMin: Float,
     val yMax: Float,
-    val sampleIdx: Long,
     val xs: List<Double>,
     val series: List<PlotSeries>
 )
@@ -110,7 +114,13 @@ object PlotRenderer {
 
         val gridPaint = Paint().apply { color = gridColor; strokeWidth = 1f; isAntiAlias = true }
         val gridFaint = Paint().apply { color = gridColor; alpha = 100; strokeWidth = 1f }
-        val curvePaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2f; isAntiAlias = true }
+        val curvePaint = Paint().apply {
+    style = Paint.Style.STROKE
+    strokeWidth = 2f
+    isAntiAlias = true
+    strokeCap = Paint.Cap.ROUND
+    strokeJoin = Paint.Join.ROUND
+}
 
         // frame
         canvas.drawLine(plotLeft, plotBottom - plotH, plotLeft, plotBottom, gridPaint)
@@ -321,21 +331,32 @@ internal fun autoFitY(series: List<PlotSeries>, xs: List<Double>, xStart: Float,
 @Composable
 fun PlotCanvas(
     state: PlotViewState,
-    version: Long,
-    sampleIdx: Long,
+    versionFlow: StateFlow<Long>,
     horizonSpanX: Float,
     xsProvider: () -> List<Double>,
     seriesProvider: () -> List<PlotSeries>,
     modifier: Modifier = Modifier
 ) {
+    // Collect the recorder version INSIDE the canvas so only this node
+    // recomposes on every new sample (the rest of the screen stays at 5 Hz).
+    val version by versionFlow.collectAsState()
     var viewWidth by remember { mutableStateOf(1f) }
     var viewHeight by remember { mutableStateOf(1f) }
 
-    // Follow mode: pin the right edge to the latest sample
-    LaunchedEffect(version, state.followX) {
+    // Follow mode: animate the right edge to the newest sample so the plot
+    // scrolls continuously between polls instead of stepping per update.
+    val followAnim = remember { Animatable(0f) }
+    LaunchedEffect(version, state.followX, horizonSpanX) {
         if (state.followX) {
-            state.xEnd = sampleIdx.toFloat()
             state.xSpan = maxOf(horizonSpanX, MIN_X_SPAN)
+            val target = xsProvider().lastOrNull()?.toFloat() ?: return@LaunchedEffect
+            val gap = target - followAnim.value
+            if (!followAnim.isRunning && gap > state.xSpan * 0.25f) {
+                followAnim.snapTo(target) // (re)engage: jump to the live edge
+            } else {
+                followAnim.animateTo(target, tween(120, easing = LinearEasing))
+            }
+            state.xEnd = followAnim.value
         }
     }
 
@@ -351,7 +372,7 @@ fun PlotCanvas(
             .pointerInput(state) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     if (pan.x != 0f) {
-                        state.followX = false
+                        if (state.followX) { state.followX = false; state.xEnd = followAnim.value }
                         val perPx = state.xSpan / viewWidth
                         state.xEnd = (state.xEnd - pan.x * perPx).coerceAtLeast(0f)
                     }
@@ -364,6 +385,7 @@ fun PlotCanvas(
                         state.yMax = mid + half
                     }
                     if (zoom != 1f && zoom > 0f) {
+                        if (state.followX) { state.followX = false; state.xEnd = followAnim.value }
                         // Zoom anchored at the pinch centroid (detectTransformGestures
                         // reports a uniform factor; apply it to both axes).
                         val cx = (state.xEnd - state.xSpan) + centroid.x / viewWidth * state.xSpan
@@ -384,16 +406,18 @@ fun PlotCanvas(
         // Read version so this draw invalidates on every new sample
         @Suppress("UNUSED_EXPRESSION") version
 
+        // Read the animated value so the draw invalidates every animation frame
+        val liveXEnd = if (state.followX) followAnim.value else state.xEnd
         val series = seriesProvider()
         val xs = xsProvider()
         if (state.autoY && series.isNotEmpty()) {
-            autoFitY(series, xs, state.xEnd - state.xSpan, state.xEnd)?.let { (lo, hi) ->
+            autoFitY(series, xs, liveXEnd - state.xSpan, liveXEnd)?.let { (lo, hi) ->
                 if (lo != state.yMin) state.yMin = lo
                 if (hi != state.yMax) state.yMax = hi
             }
         }
         PlotRenderer.render(
-            PlotFrame(state.xEnd, state.xSpan, state.yMin, state.yMax, sampleIdx, xs, series),
+            PlotFrame(liveXEnd, state.xSpan, state.yMin, state.yMax, xs, series),
             drawContext.canvas.nativeCanvas,
             size.width,
             size.height,
