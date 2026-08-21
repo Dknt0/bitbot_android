@@ -168,6 +168,7 @@ The app communicates with the robot backend using the bitbot_xbox WebSocket prot
 
 - **Dknt** — [github.com/dknt0](https://github.com/dknt0)
 - **Claude Code** — [claude.ai/code](https://claude.ai/code)
+- **ZCode (GLM coding agent)** — numeric input fix, configurable control panel buttons
 
 ## License
 
