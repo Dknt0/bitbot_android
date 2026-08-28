@@ -324,7 +324,7 @@ internal fun autoFitY(series: List<PlotSeries>, xs: List<Double>, xStart: Float,
  * Realtime line plot on a raw Compose Canvas.
  *
  * - x axis: step index (sample number); y axis: channel values.
- * - follow mode: window = [sampleIdx - horizonSamples, sampleIdx].
+ * - follow mode: window = [latestTime - horizon, latestTime] in seconds.
  * - drag pans, pinch zooms (x and y independently).
  * - per-pixel min/max decimation when more samples than pixels.
  */
@@ -446,8 +446,10 @@ internal fun niceTicks(from: Double, to: Double, targetCount: Int): List<Float> 
     return ticks
 }
 
-private fun formatStep(v: Float): String =
-    if (abs(v) >= 10000f) "%.0fk".format(v / 1000f) else "%.0f".format(v)
+private fun formatStep(v: Float): String {
+    val t = "%.2f".format(v).trimEnd('0').trimEnd('.')
+    return "${t}s"
+}
 
 private fun formatValue(v: Double): String = when {
     abs(v) >= 1000 -> "%.0f".format(v)

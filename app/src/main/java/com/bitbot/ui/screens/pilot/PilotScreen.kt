@@ -45,6 +45,13 @@ fun PilotScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     var userDisconnecting by remember { mutableStateOf(false) }
 
+    // Publish velocity commands only while the Pilot panel is composed;
+    // the ViewModel survives panel switches, so gate explicitly.
+    DisposableEffect(Unit) {
+        viewModel.setPanelActive(true)
+        onDispose { viewModel.setPanelActive(false) }
+    }
+
     // Suppress overlay during explicit disconnect to avoid flash before navigation
     if (connectionState !is ConnectionState.Connected && !userDisconnecting) {
         Box(

@@ -166,14 +166,14 @@ fun PlotScreen(
                 Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFF44336)))
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    "REC ${uiState.rateHz}Hz  idx ${uiState.sampleIdx}",
+                    "REC ${uiState.rateHz}Hz  %.1fs".format(uiState.elapsedSeconds),
                     fontSize = 11.sp,
                     color = Color(0xFFF44336),
                     fontFamily = FontFamily.Monospace
                 )
             } else {
                 Text(
-                    "Paused  idx ${uiState.sampleIdx}",
+                    "Paused  %.1fs".format(uiState.elapsedSeconds),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace

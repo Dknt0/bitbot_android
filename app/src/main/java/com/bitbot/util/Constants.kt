@@ -22,9 +22,6 @@ object Constants {
         const val MIN_HORIZON_SECONDS = 1
         const val MAX_HORIZON_SECONDS = 60
 
-        /** Kernel monitor header holding the control-loop counter used as the plot x axis. */
-        const val PERIODS_COUNT_HEADER = "periods_count"
-
         /** Curve colors, assigned by selection order (palette cycles). */
         val PALETTE = listOf(
             0xFF2196F3L, 0xFF4CAF50L, 0xFFFFC107L, 0xFFE91E63L, 0xFF00BCD4L,

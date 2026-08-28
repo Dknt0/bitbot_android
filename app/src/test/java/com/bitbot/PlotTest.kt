@@ -114,54 +114,55 @@ class PlotTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `recorder appends frames and advances step index`() = runTest {
+    fun `recorder advances x by exactly one configured tick per frame`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
         val channels = listOf(chan("a", 0), chan("b", 2))
-        rec.updateConfig(channels, 10, 100, periodsIndex = -1) // app-count fallback
+        rec.updateConfig(channels, 10, 100)
         rec.start(10)
         h.monitorData.value = listOf(1.0, 9.9, 2.0)
         testScheduler.advanceUntilIdle()
         h.monitorData.value = listOf(3.0, 9.9, 4.0)
         testScheduler.advanceUntilIdle()
-        assertEquals(2L, rec.sampleIdx)
         assertEquals(listOf(1.0, 3.0), rec.series("a"))
         assertEquals(listOf(2.0, 4.0), rec.series("b"))
-        assertEquals(listOf(1.0, 2.0), rec.xSeries) // fallback: app sample count
+        // Frontend clock: one frame = 1/rateHz seconds, independent of backend
+        assertEquals(listOf(0.1, 0.2), rec.xSeries)
+        assertEquals(0.2, rec.lastTimeSeconds, 1e-9)
         verify(exactly = 1) { h.repository.acquireDataPolling(10) }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `recorder uses kernel periods_count as step index`() = runTest {
+    fun `x spacing follows the configured rate`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
-        rec.updateConfig(listOf(chan("a", 0)), 10, 100, periodsIndex = 1)
-        rec.start(10)
-        h.monitorData.value = listOf(11.0, 5000.0)
-        testScheduler.advanceUntilIdle()
-        h.monitorData.value = listOf(12.0, 5035.0)
-        testScheduler.advanceUntilIdle()
-        assertEquals(5035L, rec.sampleIdx) // kernel counter, not app sample count
-        assertEquals(listOf(11.0, 12.0), rec.series("a"))
-        // x values are the kernel counts — samples are ~35 periods apart, not 1
-        assertEquals(listOf(5000.0, 5035.0), rec.xSeries)
+        rec.updateConfig(listOf(chan("a", 0)), 50, 500)
+        rec.start(50)
+        repeat(3) {
+            h.monitorData.value = listOf(it.toDouble())
+            testScheduler.advanceUntilIdle()
+        }
+        assertEquals(listOf(0.02, 0.04, 0.06), rec.xSeries)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `kernel counter going backwards clears buffers (restart)`() = runTest {
+    fun `pause and resume continues the time axis`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
-        rec.updateConfig(listOf(chan("a", 0)), 10, 100, periodsIndex = 1)
+        rec.updateConfig(listOf(chan("a", 0)), 10, 100)
         rec.start(10)
-        h.monitorData.value = listOf(11.0, 5000.0)
+        h.monitorData.value = listOf(1.0)
         testScheduler.advanceUntilIdle()
-        h.monitorData.value = listOf(1.0, 3.0) // kernel restarted
+        rec.pause()
+        h.monitorData.value = listOf(2.0) // dropped while paused
         testScheduler.advanceUntilIdle()
-        assertEquals(3L, rec.sampleIdx)
-        assertEquals(listOf(1.0), rec.series("a")) // old epoch dropped
-        assertEquals(listOf(3.0), rec.xSeries)
+        rec.start(10)
+        h.monitorData.value = listOf(3.0)
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf(0.1, 0.2), rec.xSeries) // continuous, no reset
+        assertEquals(0.2, rec.lastTimeSeconds, 1e-9)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -175,33 +176,28 @@ class PlotTest {
             h.monitorData.value = listOf(it.toDouble())
             testScheduler.advanceUntilIdle() // StateFlow conflates; collect each frame
         }
-        assertEquals(5L, rec.sampleIdx)
+        assertEquals(0.5, rec.lastTimeSeconds, 1e-9) // full time kept, buffer trimmed
+        assertEquals(listOf(3, 3), listOf(rec.series("a").size, rec.xSeries.size))
         assertEquals(listOf(2.0, 3.0, 4.0), rec.series("a"))
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `pause stops capture and releases polling, resume continues idx`() = runTest {
+    fun `pause stops capture and releases polling`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
         rec.updateConfig(listOf(chan("a", 0)), 10, 100)
         rec.start(10)
         h.monitorData.value = listOf(1.0)
         testScheduler.advanceUntilIdle()
-        assertEquals(1L, rec.sampleIdx)
+        assertEquals(0.1, rec.lastTimeSeconds, 1e-9)
 
         rec.pause()
         h.monitorData.value = listOf(2.0) // no capture while paused
         testScheduler.advanceUntilIdle()
-        assertEquals(1L, rec.sampleIdx)
+        assertEquals(0.1, rec.lastTimeSeconds, 1e-9)
         assertEquals(listOf(1.0), rec.series("a"))
         verify(exactly = 1) { h.repository.releaseDataPolling(any()) }
-
-        rec.start(10)
-        h.monitorData.value = listOf(3.0)
-        testScheduler.advanceUntilIdle()
-        assertEquals(2L, rec.sampleIdx) // step index continues, no reset
-        assertEquals(listOf(1.0, 3.0), rec.series("a"))
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -218,23 +214,23 @@ class PlotTest {
     // --- CSV export ---
 
     @Test
-    fun `csv carries true non-uniform kernel_count per row`() {
+    fun `csv carries time_s per row`() {
         val a = PlotChannel("kernel:x", 0, "kernel", "x")
         val b = PlotChannel("dev:leg:pos", 1, "leg", "pos")
-        // 500 Hz kernel polled at 10 Hz: consecutive x are 50 periods apart
+        // 10 Hz: consecutive x are 0.1 s apart (frontend clock)
         val csv = PlotRecorder.buildCsv(
             channels = listOf(a, b),
             buffers = mapOf(
                 "kernel:x" to listOf(1.0, 2.0, 3.0),
                 "dev:leg:pos" to listOf(10.0) // started later
             ),
-            xs = listOf(1000.0, 1050.0, 1100.0)
+            xs = listOf(0.1, 0.2, 0.3)
         )
         val lines = csv.trim().lines()
-        assertEquals("kernel_count,kernel.x,leg.pos", lines[0])
-        assertEquals("1000,1,", lines[1])
-        assertEquals("1050,2,", lines[2])
-        assertEquals("1100,3,10", lines[3])
+        assertEquals("time_s,kernel.x,leg.pos", lines[0])
+        assertEquals("0.100,1,", lines[1])
+        assertEquals("0.200,2,", lines[2])
+        assertEquals("0.300,3,10", lines[3])
     }
 
     @Test
@@ -247,21 +243,9 @@ class PlotTest {
     @Test
     fun `csv quotes names containing commas`() {
         val ch = PlotChannel("dev:a:b, c", 0, "a", "b, c")
-        val csv = PlotRecorder.buildCsv(listOf(ch), mapOf("dev:a:b, c" to listOf(1.5)), listOf(42.0))
+        val csv = PlotRecorder.buildCsv(listOf(ch), mapOf("dev:a:b, c" to listOf(1.5)), listOf(0.05))
         assertTrue(csv.lines()[0].contains("\"a.b, c\""))
-        assertEquals("42,1.5", csv.trim().lines()[1])
+        assertEquals("0.050,1.5", csv.trim().lines()[1])
     }
 
-    @Test
-    fun `registry finds periods_count index`() {
-        val headers = HeadersResponseDto(
-            kernel = listOf("state", "periods_count"),
-            bus = null,
-            extra = emptyList()
-        )
-        assertEquals(1, PlotChannels.periodsIndex(headers))
-        assertEquals(-1, PlotChannels.periodsIndex(null))
-        val other = HeadersResponseDto(kernel = listOf("state"), bus = null, extra = emptyList())
-        assertEquals(-1, PlotChannels.periodsIndex(other))
-    }
 }

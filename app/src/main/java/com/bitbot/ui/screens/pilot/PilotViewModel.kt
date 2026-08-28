@@ -55,6 +55,7 @@ class PilotViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ConnectionState.Disconnected)
 
     private var velocityJob: Job? = null
+    private var isPanelActive = false
 
     // Cached velocity config from DataStore
     private var velXPos: Double = PolicyMode.STANDING.defaultVelXPos
@@ -66,8 +67,9 @@ class PilotViewModel @Inject constructor(
 
     init {
         loadVelocityConfig()
-        startVelocityLoop()
         observeButtonLayout()
+        // Velocity loop starts when the Pilot panel becomes visible
+        // (see setPanelActive, driven by PilotScreen's lifecycle).
     }
 
     private fun loadVelocityConfig() {
@@ -101,6 +103,34 @@ class PilotViewModel @Inject constructor(
                         ?: ButtonLayouts.defaultLayout(repository.availableEvents())
                     _uiState.value = _uiState.value.copy(buttons = buttons)
                 }
+        }
+    }
+
+    /**
+     * The velocity loop publishes commands only while the Pilot panel is
+     * visible — the ViewModel outlives panel switches (nav-entry scoped), so
+     * Data/Plot panels must not keep streaming set_vel events. On deactivate
+     * one zero-velocity batch is sent so the robot doesn't hold the last
+     * commanded velocity.
+     */
+    fun setPanelActive(active: Boolean) {
+        if (active == isPanelActive) return
+        isPanelActive = active
+        if (active) {
+            startVelocityLoop()
+        } else {
+            velocityJob?.cancel()
+            velocityJob = null
+            _uiState.value = _uiState.value.copy(
+                leftJoystickX = 0f, leftJoystickY = 0f,
+                rightJoystickX = 0f, rightJoystickY = 0f,
+                velX = 0.0, velY = 0.0, velW = 0.0
+            )
+            repository.sendVelocityEvents(listOf(
+                Events.SET_VEL_X to 0.0,
+                Events.SET_VEL_Y to 0.0,
+                Events.SET_VEL_W to 0.0
+            ))
         }
     }
 

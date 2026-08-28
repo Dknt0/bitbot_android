@@ -62,9 +62,6 @@ class PlotLiveBackendTest {
         val headers = kotlinx.coroutines.runBlocking { api.getHeaders(base).getOrThrow() }
         val registry = PlotChannels.build(headers)
         assertEquals("state", registry[0].name)
-        assertEquals("periods_count", registry[1].name)
-        val periodsIdx = PlotChannels.periodsIndex(headers)
-        assertEquals(1, periodsIdx)
         assertTrue("expected joint channels", registry.size > 50)
 
         val posChannel = registry.first { it.name == "actual_position" }
@@ -81,7 +78,7 @@ class PlotLiveBackendTest {
             every { releaseDataPolling(any()) } returns Unit
         }
         val recorder = PlotRecorder(repository)
-        recorder.updateConfig(listOf(posChannel, kernelT), 20, 20 * 60, periodsIdx)
+        recorder.updateConfig(listOf(posChannel, kernelT), 20, 20 * 60)
         recorder.start(20)
 
         // --- 3. live websocket polling at 20 Hz for ~4 s ---
@@ -115,20 +112,16 @@ class PlotLiveBackendTest {
         val xs = recorder.xSeries.toList()
         assertTrue("no frames captured", xs.size >= 40)
         assertTrue("x must be monotonic", xs.zipWithNext().all { (a, b) -> b > a })
-        assertEquals(xs.last().toLong(), recorder.sampleIdx)
 
+        // Frontend clock: every frame advances exactly 1/20 s regardless of
+        // the backend's internal loop rate
         val diffs = xs.zipWithNext().map { (a, b) -> b - a }
-        val medianDx = diffs.sorted()[diffs.size / 2]
-        val pps = recorder.periodsPerSecond
-        println("periodsPerSecond=%.0f, median dx=%.1f, frames=%d".format(pps, medianDx, xs.size))
-        assertTrue("kernel rate implausible: $pps", pps in 100.0..2000.0)
-
-        // Sample spacing must reflect kernel-rate/poll-rate mismatch
-        val expectedDx = pps / 20.0
         assertTrue(
-            "spacing $medianDx not close to kernel/poll mismatch $expectedDx",
-            abs(medianDx - expectedDx) < expectedDx * 0.5
+            "spacing deviates from configured tick: ${diffs.distinct()}",
+            diffs.all { abs(it - 0.05) < 1e-9 }
         )
+        assertEquals(xs.size / 20.0, recorder.lastTimeSeconds, 0.02)
+        println("frames=%d, span=%.2fs (frontend clock @20Hz)".format(xs.size, recorder.lastTimeSeconds))
 
         val values = recorder.series(posChannel.key)
         val finite = values.count { it.isFinite() }
@@ -137,13 +130,13 @@ class PlotLiveBackendTest {
         // --- 5. window + density math (the regression class we fixed) ---
         val plotWidthPx = 1000f
         for (horizonSeconds in listOf(1, 10, 60)) {
-            val xEnd = recorder.sampleIdx.toFloat()
-            val xSpan = (pps * horizonSeconds).toFloat()
+            val xEnd = recorder.lastTimeSeconds
+            val xSpan = horizonSeconds.toDouble() // window length = horizon exactly
             val xStart = xEnd - xSpan
-            val visible = xs.count { it in xStart.toDouble()..xEnd.toDouble() }
+            val visible = xs.count { it in xStart..xEnd }
             val samplesPerPixel = visible / plotWidthPx
             val mode = if (samplesPerPixel <= 1.5f) "polyline" else "minmax"
-            println("horizon=${horizonSeconds}s: span=$xSpan periods, visible=$visible samples, " +
+            println("horizon=${horizonSeconds}s: visible=$visible samples, " +
                 "samples/px=%.3f -> $mode".format(samplesPerPixel))
             if (horizonSeconds == 1) {
                 // 1s window at 20 Hz holds ~20 samples -> connected polyline
@@ -152,18 +145,18 @@ class PlotLiveBackendTest {
         }
 
         // --- 6. ASCII render (60s window) for visual inspection ---
-        asciiPlot("hip ${posChannel.group}.actual_position", recorder, posChannel.key, pps, 60)
-        asciiPlot("${kernelT.group}.kernel_t(ms)", recorder, kernelT.key, pps, 60)
+        asciiPlot("hip ${posChannel.group}.actual_position", recorder, posChannel.key, 60)
+        asciiPlot("${kernelT.group}.kernel_t(ms)", recorder, kernelT.key, 60)
     }
 
-    private fun asciiPlot(title: String, recorder: PlotRecorder, key: String, pps: Double, horizonSeconds: Int) {
+    private fun asciiPlot(title: String, recorder: PlotRecorder, key: String, horizonSeconds: Int) {
         val cols = 90
         val rows = 14
         val xs = recorder.xSeries
         val ys = recorder.series(key)
         if (ys.isEmpty()) return
-        val xEnd = recorder.sampleIdx.toDouble()
-        val xStart = xEnd - pps * horizonSeconds
+        val xEnd = recorder.lastTimeSeconds
+        val xStart = xEnd - horizonSeconds
         val pts = xs.mapIndexed { i, x -> x to (ys.getOrNull(i - (xs.size - ys.size)) ?: Double.NaN) }
             .filter { (x, v) -> x >= xStart && v.isFinite() }
         if (pts.isEmpty()) return

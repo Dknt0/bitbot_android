@@ -3,7 +3,6 @@ package com.bitbot.data.plot
 import com.bitbot.data.remote.dto.HeadersResponseDto
 import com.bitbot.data.remote.websocket.PollingHandle
 import com.bitbot.data.repository.RobotRepository
-import com.bitbot.util.Constants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,10 +45,6 @@ object PlotChannels {
         }
         return out
     }
-
-    /** Index of the kernel's control-loop counter in the flat frame; -1 if absent. */
-    fun periodsIndex(headers: HeadersResponseDto?): Int =
-        headers?.kernel?.indexOfFirst { it == Constants.Plot.PERIODS_COUNT_HEADER } ?: -1
 }
 
 /**
@@ -70,30 +65,21 @@ class PlotRecorder @Inject constructor(
     private val buffers = LinkedHashMap<String, ArrayDeque<Double>>()
 
     /**
-     * X value (kernel periods_count, or app sample count as fallback) of every
-     * recorded frame, oldest..newest — all channels share these frames. The
-     * kernel loop and our poll rate differ (e.g. 500 Hz vs 10 Hz), so samples
-     * are NOT spaced 1 x-unit apart; each carries its own x.
+     * X value of every recorded frame in SECONDS since recording start — all
+     * channels share these frames. The frontend is the clock: each received
+     * frame advances time by exactly 1/rateHz, whatever the backend's internal
+     * loop frequency, so the axis is stable and the window length is exactly
+     * the configured horizon.
      */
     private val xBuf = ArrayDeque<Double>()
 
     private var channels: List<PlotChannel> = emptyList()
     private var capacity: Int = 1
-    private var periodsIndex: Int = -1
+    private var rateHz: Int = 10
+    private var xTime = 0.0
 
-    /**
-     * Step index for the x axis: the kernel's own control-loop counter
-     * (periods_count) when available, otherwise the app's sample count.
-     * Independent of the poll rate — same horizon, same plot length.
-     */
-    private var sampleIdxValue: Long = 0
-    val sampleIdx: Long get() = sampleIdxValue
-
-    /** Estimated kernel control-loop periods per wall second; 0 until measured. */
-    var periodsPerSecond: Double = 0.0
-        private set
-    private var rateWinStartPeriod = -1L
-    private var rateWinStartNanos = 0L
+    /** Recorded time span in seconds (last x value). */
+    val lastTimeSeconds: Double get() = xTime
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
@@ -112,11 +98,10 @@ class PlotRecorder @Inject constructor(
     fun updateConfig(
         channels: List<PlotChannel>,
         rateHz: Int,
-        horizonSamples: Int,
-        periodsIndex: Int = this.periodsIndex
+        horizonSamples: Int
     ) {
         this.channels = channels
-        this.periodsIndex = periodsIndex
+        this.rateHz = rateHz.coerceAtLeast(1)
         capacity = horizonSamples.coerceAtLeast(1)
         buffers.keys.retainAll(channels.map { it.key }.toSet())
         buffers.values.forEach { buf -> while (buf.size > capacity) buf.removeFirst() }
@@ -154,7 +139,7 @@ class PlotRecorder @Inject constructor(
     fun clear() {
         buffers.clear()
         xBuf.clear()
-        sampleIdxValue = 0
+        xTime = 0.0
         _version.value++
     }
 
@@ -169,24 +154,9 @@ class PlotRecorder @Inject constructor(
     val xSeries: List<Double> get() = xBuf
 
     private fun appendFrame(frame: List<Double>) {
-        val kernelCount = frame.getOrNull(periodsIndex)
-            ?.takeIf { periodsIndex >= 0 && it.isFinite() }
-            ?.toLong()
-        val x: Double = if (kernelCount != null) {
-            if (kernelCount < sampleIdxValue) {
-                // Kernel restarted — start a fresh recording epoch
-                buffers.clear()
-                xBuf.clear()
-            }
-            sampleIdxValue = kernelCount
-            updatePeriodRate(kernelCount)
-            kernelCount.toDouble()
-        } else {
-            sampleIdxValue++
-            sampleIdxValue.toDouble()
-        }
-
-        xBuf.addLast(x)
+        // Frontend-driven time axis: one frame = one tick at the configured rate
+        xTime += 1.0 / rateHz
+        xBuf.addLast(xTime)
         while (xBuf.size > capacity) xBuf.removeFirst()
 
         for (ch in channels) {
@@ -199,28 +169,11 @@ class PlotRecorder @Inject constructor(
         _version.value++
     }
 
-    /** Rolling ~1s-window estimate of kernel periods per wall second. */
-    private fun updatePeriodRate(period: Long) {
-        val now = System.nanoTime()
-        if (rateWinStartPeriod < 0 || period < rateWinStartPeriod) {
-            rateWinStartPeriod = period
-            rateWinStartNanos = now
-            return
-        }
-        val dt = (now - rateWinStartNanos) / 1e9
-        if (dt >= 1.0) {
-            val dp = period - rateWinStartPeriod
-            if (dp > 0) periodsPerSecond = dp / dt
-            rateWinStartPeriod = period
-            rateWinStartNanos = now
-        }
-    }
-
     companion object {
         /**
-         * Pure CSV export: `kernel_count` column (the true x value of each
-         * recorded frame) plus one column per channel. Channels that started
-         * recording later have empty leading cells.
+         * Pure CSV export: `time_s` column (seconds since recording start, the
+         * plot x value of each frame) plus one column per channel. Channels
+         * that started recording later have empty leading cells.
          */
         fun buildCsv(
             channels: List<PlotChannel>,
@@ -228,14 +181,14 @@ class PlotRecorder @Inject constructor(
             xs: List<Double>
         ): String {
             if (channels.isEmpty() || xs.isEmpty()) return ""
-            val header = StringBuilder("kernel_count,")
+            val header = StringBuilder("time_s,")
                 .append(channels.joinToString(",") { escapeCsv("${it.group}.${it.name}") })
                 .append('\n')
             val rows = StringBuilder()
             val series = channels.map { buffers[it.key].orEmpty() }
             val maxLen = xs.size // every frame appends an x; series never exceed it
             for (i in 0 until maxLen) {
-                rows.append("%.0f".format(Locale.US, xs[i]))
+                rows.append("%.3f".format(Locale.US, xs[i]))
                 for (s in series) {
                     rows.append(',')
                     val idxInSeries = i - (maxLen - s.size)

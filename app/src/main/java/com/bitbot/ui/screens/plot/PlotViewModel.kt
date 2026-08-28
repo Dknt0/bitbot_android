@@ -45,18 +45,12 @@ data class PlotUiState(
     val rateHz: Int = Constants.Plot.DEFAULT_RATE_HZ,
     val horizonSeconds: Int = Constants.Plot.DEFAULT_HORIZON_SECONDS,
     val isRecording: Boolean = false,
-    val sampleIdx: Long = 0,
-    val hasData: Boolean = false,
-    /** Kernel control-loop periods per second; 0 until measured after recording starts. */
-    val periodsPerSecond: Double = 0.0
+    /** Recorded time span in seconds (frontend clock: frames / rateHz). */
+    val elapsedSeconds: Double = 0.0,
+    val hasData: Boolean = false
 ) {
-    /**
-     * Follow-window width in x (kernel periods) for the configured horizon.
-     * Poll-rate independent: a higher rate only adds more points per window.
-     */
-    val horizonSpanX: Float
-        get() = if (periodsPerSecond > 0.0) (periodsPerSecond * horizonSeconds).toFloat()
-        else 1000f // pre-measurement placeholder; replaced within ~1s of recording
+    /** Follow-window width in x — exactly the configured horizon (seconds). */
+    val horizonSpanX: Float get() = horizonSeconds.toFloat()
 }
 
 @HiltViewModel
@@ -99,7 +93,6 @@ class PlotViewModel @Inject constructor(
 
             val keyToChannel = registry.associateBy { it.key }
             val selected = savedKeys.mapNotNull { keyToChannel[it] }
-            val periodsIdx = PlotChannels.periodsIndex(repository.headers)
 
             _uiState.value = PlotUiState(
                 registry = registry,
@@ -107,7 +100,7 @@ class PlotViewModel @Inject constructor(
                 rateHz = rate,
                 horizonSeconds = horizon
             )
-            recorder.updateConfig(selected, rate, rate * horizon, periodsIdx)
+            recorder.updateConfig(selected, rate, rate * horizon)
         }
 
         viewModelScope.launch {
@@ -124,9 +117,8 @@ class PlotViewModel @Inject constructor(
                 if (now - lastUpdate >= 200) {
                     lastUpdate = now
                     _uiState.value = _uiState.value.copy(
-                        sampleIdx = recorder.sampleIdx,
-                        hasData = recorder.sampleIdx > 0,
-                        periodsPerSecond = recorder.periodsPerSecond
+                        elapsedSeconds = recorder.lastTimeSeconds,
+                        hasData = recorder.lastTimeSeconds > 0.0
                     )
                 }
             }
