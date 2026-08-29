@@ -109,9 +109,12 @@ class PilotViewModel @Inject constructor(
     /**
      * The velocity loop publishes commands only while the Pilot panel is
      * visible — the ViewModel outlives panel switches (nav-entry scoped), so
-     * Data/Plot panels must not keep streaming set_vel events. On deactivate
-     * one zero-velocity batch is sent so the robot doesn't hold the last
-     * commanded velocity.
+     * Data/Plot panels must not keep streaming set_vel events.
+     *
+     * No zero-velocity batch is sent on deactivate: multiple apps may share
+     * one backend (one piloting, others monitoring), and a monitor publishing
+     * anything would interfere with the active pilot. Stopping the robot is
+     * the E-STOP / stop event's job.
      */
     fun setPanelActive(active: Boolean) {
         if (active == isPanelActive) return
@@ -126,11 +129,6 @@ class PilotViewModel @Inject constructor(
                 rightJoystickX = 0f, rightJoystickY = 0f,
                 velX = 0.0, velY = 0.0, velW = 0.0
             )
-            repository.sendVelocityEvents(listOf(
-                Events.SET_VEL_X to 0.0,
-                Events.SET_VEL_Y to 0.0,
-                Events.SET_VEL_W to 0.0
-            ))
         }
     }
 
