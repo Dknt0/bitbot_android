@@ -141,6 +141,9 @@ These limits are configurable via Settings (persisted in DataStore). Keys: `Velo
 - Commits made by ZCode carry a `Co-Authored-By: ZCode <noreply@z.ai>` trailer.
 - ZCode is credited in the README Authors list (between Dknt and Claude Code); keep it there on README rewrites.
 
+## Debug Variant
+`assembleDebug` produces a second app installed **alongside** the release app: applicationId `com.bitbot.debug`, label "Bitbot Debug" (`applicationIdSuffix` in the debug build type). It carries `WS-TX` logcat tags for every outgoing button/velocity frame and panel-activity transitions — filter with `adb logcat -s WS-TX`.
+
 ## Build & Install
 
 ```bash

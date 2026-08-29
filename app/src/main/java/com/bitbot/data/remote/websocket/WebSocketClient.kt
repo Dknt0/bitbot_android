@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.bitbot.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -217,6 +218,7 @@ class WebSocketClient @Inject constructor(
     fun sendButtonEvent(name: String, value: Long) {
         val ws = webSocket ?: return
         if (_state.value !is WebSocketState.Connected) return
+        if (BuildConfig.DEBUG) Log.d(TX_TAG, "button $name=$value")
 
         val inner = """{"events":[{"name":"$name","value":$value}]}"""
         val outer = """{"type":"events","data":"${inner.replace("\"", "\\\"")}"}"""
@@ -243,6 +245,7 @@ class WebSocketClient @Inject constructor(
     fun sendVelocityEvents(events: List<Pair<String, Double>>) {
         val ws = webSocket ?: return
         if (_state.value !is WebSocketState.Connected) return
+        if (BuildConfig.DEBUG) Log.d(TX_TAG, "vel " + events.joinToString(",") { (n, v) -> "$n=%.3f".format(v) })
 
         val eventsJson = events.joinToString(",") { (name, value) ->
             """{"name":"$name","value":${value.toBits()}}"""
@@ -254,5 +257,6 @@ class WebSocketClient @Inject constructor(
 
     companion object {
         private const val TAG = "WebSocketClient"
+        private const val TX_TAG = "WS-TX"
     }
 }

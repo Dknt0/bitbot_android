@@ -41,6 +41,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Installs alongside the release app under a distinct name/id so
+            // both can run at once (separate data, debug signing).
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            resValue("string", "app_name", "Bitbot Debug")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
@@ -59,6 +66,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.5"

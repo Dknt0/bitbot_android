@@ -14,7 +14,9 @@ import androidx.compose.ui.unit.dp
 import com.bitbot.ui.components.PanelSwitcher
 import com.bitbot.ui.components.PanelType
 import com.bitbot.ui.screens.data.DataScreen
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.bitbot.ui.screens.pilot.PilotScreen
+import com.bitbot.ui.screens.pilot.PilotViewModel
 import com.bitbot.ui.screens.plot.PlotScreen
 
 @Composable
@@ -24,6 +26,12 @@ fun PanelHostScreen(
     initialPanel: PanelType = PanelType.PILOT
 ) {
     var activePanel by remember { mutableStateOf(initialPanel) }
+
+    // Same nav-entry-scoped instance PilotScreen uses. Deactivating the
+    // velocity loop synchronously on the switch click — DisposableEffect's
+    // onDispose can lag a frame or two behind on a busy main thread, which
+    // showed up as a ~120 ms tail of zero-velocity frames after leaving Pilot.
+    val pilotViewModel: PilotViewModel = hiltViewModel()
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (activePanel) {
@@ -37,7 +45,10 @@ fun PanelHostScreen(
 
         PanelSwitcher(
             activePanel = activePanel,
-            onPanelSelected = { activePanel = it },
+            onPanelSelected = { panel ->
+                if (panel != PanelType.PILOT) pilotViewModel.setPanelActive(false)
+                activePanel = panel
+            },
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 8.dp, bottom = 8.dp)

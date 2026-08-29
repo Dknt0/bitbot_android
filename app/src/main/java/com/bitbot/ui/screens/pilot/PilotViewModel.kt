@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.bitbot.BuildConfig
 import com.bitbot.data.model.ButtonConfig
 import com.bitbot.data.model.ButtonLayoutCodec
 import com.bitbot.data.model.ButtonLayouts
@@ -117,6 +118,7 @@ class PilotViewModel @Inject constructor(
      * the E-STOP / stop event's job.
      */
     fun setPanelActive(active: Boolean) {
+        if (BuildConfig.DEBUG) android.util.Log.d("WS-TX", "setPanelActive($active)")
         if (active == isPanelActive) return
         isPanelActive = active
         if (active) {
