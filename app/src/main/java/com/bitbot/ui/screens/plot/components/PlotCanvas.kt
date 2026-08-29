@@ -46,7 +46,9 @@ class PlotFrame(
     val yMin: Float,
     val yMax: Float,
     val xs: List<Double>,
-    val series: List<PlotSeries>
+    val series: List<PlotSeries>,
+    /** Live mode: hold the newest value to this x (wall-clock roll). Null = frozen. */
+    val extendToX: Float? = null
 )
 
 /**
@@ -92,6 +94,7 @@ object PlotRenderer {
     }
 
     fun render(frame: PlotFrame, canvas: Canvas, widthPx: Float, heightPx: Float, textPaint: Paint) {
+        val extendToX = frame.extendToX
         val plotLeft = textPaint.textSize * 3.4f + 4f
         val plotBottom = heightPx - textPaint.textSize * 2f
         val plotW = max(1f, widthPx - plotLeft - 4f)
@@ -157,7 +160,25 @@ object PlotRenderer {
                 if (jTo < 0) jFrom = j
                 jTo = j
             }
-            if (jTo < jFrom) continue
+            if (jTo < jFrom) {
+                // Window slid past every sample (long stall): hold the newest
+                // value across the whole live window.
+                if (extendToX != null && n > 0) {
+                    var newest = Double.NaN
+                    for (j in n - 1 downTo 0) {
+                        if (s.values[j].isFinite()) { newest = s.values[j]; break }
+                    }
+                    if (newest.isFinite()) {
+                        curvePaint.color = s.color.toArgb()
+                        val py = yToPx(newest)
+                        val hold = android.graphics.Path()
+                        hold.moveTo(plotLeft, py)
+                        hold.lineTo(xToPx(extendToX), py)
+                        canvas.drawPath(hold, curvePaint)
+                    }
+                }
+                continue
+            }
 
             // Density is SAMPLES per pixel (not x-span per pixel — kernel
             // periods per pixel is >1 even for sparse sampled data).
@@ -167,6 +188,8 @@ object PlotRenderer {
             val path = android.graphics.Path()
             if (samplesPerPixel <= 1.5f) {
                 var started = false
+                var lastPx = 0f
+                var lastPy = 0f
                 for (j in jFrom..jTo) {
                     val v = s.values[j]
                     if (!v.isFinite()) continue
@@ -177,6 +200,11 @@ object PlotRenderer {
                     } else {
                         path.lineTo(px, py)
                     }
+                    lastPx = px; lastPy = py
+                }
+                // Sample-and-hold: extend the newest value to the live edge
+                if (started && extendToX != null && lastPx < xToPx(extendToX)) {
+                    path.lineTo(xToPx(extendToX), lastPy)
                 }
                 curvePaint.strokeWidth = 2f
             } else {
@@ -188,6 +216,8 @@ object PlotRenderer {
                 var colLastY = 0f
                 var prevCol = Int.MIN_VALUE
                 var prevColLastY = 0f
+                var lastPx = 0f
+                var lastPy = 0f
                 fun flushColumn() {
                     val px = plotLeft + curCol
                     if (prevCol != Int.MIN_VALUE) {
@@ -215,9 +245,15 @@ object PlotRenderer {
                         if (v > hi) hi = v
                     }
                     colLastY = yToPx(v)
+                    lastPx = xToPx(xs[j + offset].toFloat())
+                    lastPy = yToPx(v)
                 }
                 if (curCol != Int.MIN_VALUE) {
                     flushColumn()
+                }
+                if (extendToX != null && lastPx < xToPx(extendToX)) {
+                    path.moveTo(lastPx, lastPy)
+                    path.lineTo(xToPx(extendToX), lastPy)
                 }
                 curvePaint.strokeWidth = 1.5f
             }
@@ -343,15 +379,15 @@ fun PlotCanvas(
     var viewHeight by remember { mutableStateOf(1f) }
 
     // Follow mode driven by the WALL CLOCK on every animation frame: the
-    // right edge advances at exactly 1 s/s (last sample time + elapsed since
-    // its arrival, extrapolation capped), independent of reply burstiness.
-    // Chasing per-sample targets instead made the scroll speed jitter.
+    // right edge is "now" (recording epoch time) and advances at exactly
+    // 1 s/s regardless of data arrival — samples are held (see extendToX) so
+    // the trace always reaches the live edge, even during reply stalls.
     LaunchedEffect(state.followX, horizonSpanX) {
         while (state.followX) {
             withFrameNanos { frameNanos ->
-                val lastX = xsProvider().lastOrNull() ?: return@withFrameNanos
-                val elapsed = (frameNanos - arrivalNanosProvider()) / 1e9f
-                val xEnd = (lastX + elapsed.coerceIn(0f, 0.2f)).toFloat()
+                val lastX = xsProvider().lastOrNull()?.toFloat() ?: return@withFrameNanos
+                val elapsed = ((frameNanos - arrivalNanosProvider()) / 1e9f).coerceAtLeast(0f)
+                val xEnd = lastX + elapsed
                 if (xEnd != state.xEnd) state.xEnd = xEnd
                 val span = maxOf(horizonSpanX, MIN_X_SPAN)
                 if (span != state.xSpan) state.xSpan = span
@@ -415,7 +451,10 @@ fun PlotCanvas(
             }
         }
         PlotRenderer.render(
-            PlotFrame(liveXEnd, state.xSpan, state.yMin, state.yMax, xs, series),
+            PlotFrame(
+                liveXEnd, state.xSpan, state.yMin, state.yMax, xs, series,
+                extendToX = if (state.followX) liveXEnd else null
+            ),
             drawContext.canvas.nativeCanvas,
             size.width,
             size.height,
