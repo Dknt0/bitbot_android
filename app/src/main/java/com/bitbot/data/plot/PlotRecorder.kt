@@ -65,21 +65,29 @@ class PlotRecorder @Inject constructor(
     private val buffers = LinkedHashMap<String, ArrayDeque<Double>>()
 
     /**
-     * X value of every recorded frame in SECONDS since recording start — all
-     * channels share these frames. The frontend is the clock: each received
-     * frame advances time by exactly 1/rateHz, whatever the backend's internal
-     * loop frequency, so the axis is stable and the window length is exactly
-     * the configured horizon.
+     * X value of every recorded frame in SECONDS — the frame's real ARRIVAL
+     * time on the wall clock, so channels that track the backend's own clock
+     * (e.g. periods_count) plot as straight lines even when replies arrive in
+     * bursts. Paused gaps are stitched out by shifting the epoch on resume.
      */
     private val xBuf = ArrayDeque<Double>()
+
+    /** Injectable for tests. */
+    internal var clockNanos: () -> Long = System::nanoTime
 
     private var channels: List<PlotChannel> = emptyList()
     private var capacity: Int = 1
     private var rateHz: Int = 10
     private var xTime = 0.0
+    private var startNanos = 0L
+    private var pausedAtNanos = 0L
 
     /** Recorded time span in seconds (last x value). */
     val lastTimeSeconds: Double get() = xTime
+
+    /** Wall-clock nanos of the newest recorded frame (drives the follow edge). */
+    var lastArrivalNanos: Long = 0L
+        private set
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
@@ -116,6 +124,11 @@ class PlotRecorder @Inject constructor(
 
     fun start(rateHz: Int) {
         if (_isRecording.value || channels.isEmpty()) return
+        // Stitch out the paused gap so the time axis stays continuous
+        if (pausedAtNanos != 0L) {
+            startNanos += clockNanos() - pausedAtNanos
+            pausedAtNanos = 0L
+        }
         pollHandle = repository.acquireDataPolling(rateHz)
         _isRecording.value = true
         recordJob = scope.launch {
@@ -129,6 +142,7 @@ class PlotRecorder @Inject constructor(
     fun pause() {
         if (!_isRecording.value) return
         _isRecording.value = false
+        pausedAtNanos = clockNanos()
         recordJob?.cancel()
         recordJob = null
         pollHandle?.let { repository.releaseDataPolling(it) }
@@ -140,6 +154,8 @@ class PlotRecorder @Inject constructor(
         buffers.clear()
         xBuf.clear()
         xTime = 0.0
+        startNanos = 0L
+        pausedAtNanos = 0L
         _version.value++
     }
 
@@ -154,8 +170,11 @@ class PlotRecorder @Inject constructor(
     val xSeries: List<Double> get() = xBuf
 
     private fun appendFrame(frame: List<Double>) {
-        // Frontend-driven time axis: one frame = one tick at the configured rate
-        xTime += 1.0 / rateHz
+        // Wall-clock x: the frame's true arrival instant since recording start
+        val now = clockNanos()
+        if (startNanos == 0L) startNanos = now
+        xTime = (now - startNanos) / 1e9
+        lastArrivalNanos = now
         xBuf.addLast(xTime)
         while (xBuf.size > capacity) xBuf.removeFirst()
 

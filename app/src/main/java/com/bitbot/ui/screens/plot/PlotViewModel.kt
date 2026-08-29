@@ -166,8 +166,11 @@ class PlotViewModel @Inject constructor(
 
     fun seriesFor(channel: PlotChannel): List<Double> = recorder.series(channel.key)
 
-    /** X value (kernel periods_count) of every recorded frame, oldest..newest. */
+    /** X value (arrival time, seconds since recording start) of every frame. */
     fun xSeries(): List<Double> = recorder.xSeries
+
+    /** Wall-clock nanos of the newest recorded frame. */
+    fun lastArrivalNanos(): Long = recorder.lastArrivalNanos
 
     fun dismissSaveMessage() { _saveMessage.value = null }
 

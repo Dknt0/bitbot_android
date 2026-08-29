@@ -114,55 +114,67 @@ class PlotTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `recorder advances x by exactly one configured tick per frame`() = runTest {
+    fun `x is the frame arrival time on the wall clock`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
+        var clock = 1_000_000_000L
+        rec.clockNanos = { clock }
         val channels = listOf(chan("a", 0), chan("b", 2))
         rec.updateConfig(channels, 10, 100)
         rec.start(10)
         h.monitorData.value = listOf(1.0, 9.9, 2.0)
         testScheduler.advanceUntilIdle()
+        clock += 10_000_000 // +10 ms real arrival gap (not 1/rate)
         h.monitorData.value = listOf(3.0, 9.9, 4.0)
         testScheduler.advanceUntilIdle()
         assertEquals(listOf(1.0, 3.0), rec.series("a"))
         assertEquals(listOf(2.0, 4.0), rec.series("b"))
-        // Frontend clock: one frame = 1/rateHz seconds, independent of backend
-        assertEquals(listOf(0.1, 0.2), rec.xSeries)
-        assertEquals(0.2, rec.lastTimeSeconds, 1e-9)
+        // x = true arrival instants: 0.0 and 0.01 regardless of configured rate
+        assertEquals(listOf(0.0, 0.01), rec.xSeries)
+        assertEquals(0.01, rec.lastTimeSeconds, 1e-9)
         verify(exactly = 1) { h.repository.acquireDataPolling(10) }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `x spacing follows the configured rate`() = runTest {
+    fun `bursty arrivals keep their true instants`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
+        var clock = 1_000_000_000L
+        rec.clockNanos = { clock }
         rec.updateConfig(listOf(chan("a", 0)), 50, 500)
         rec.start(50)
-        repeat(3) {
-            h.monitorData.value = listOf(it.toDouble())
-            testScheduler.advanceUntilIdle()
-        }
-        assertEquals(listOf(0.02, 0.04, 0.06), rec.xSeries)
+        // Two frames 2 ms apart (burst), then one 50 ms later (stall)
+        h.monitorData.value = listOf(0.0); testScheduler.advanceUntilIdle()
+        clock += 2_000_000
+        h.monitorData.value = listOf(1.0); testScheduler.advanceUntilIdle()
+        clock += 50_000_000
+        h.monitorData.value = listOf(2.0); testScheduler.advanceUntilIdle()
+        assertEquals(listOf(0.0, 0.002, 0.052), rec.xSeries)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `pause and resume continues the time axis`() = runTest {
+    fun `pause gap is stitched out on resume`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
+        var clock = 1_000_000_000L
+        rec.clockNanos = { clock }
         rec.updateConfig(listOf(chan("a", 0)), 10, 100)
         rec.start(10)
         h.monitorData.value = listOf(1.0)
         testScheduler.advanceUntilIdle()
+        clock += 50_000_000 // first frame at t=0.05
         rec.pause()
-        h.monitorData.value = listOf(2.0) // dropped while paused
-        testScheduler.advanceUntilIdle()
+        clock += 5_000_000_000L // 5 s paused (stitched out)
         rec.start(10)
+        clock += 10_000_000
         h.monitorData.value = listOf(3.0)
         testScheduler.advanceUntilIdle()
-        assertEquals(listOf(0.1, 0.2), rec.xSeries) // continuous, no reset
-        assertEquals(0.2, rec.lastTimeSeconds, 1e-9)
+        // Frame 1 at t=0; 50 ms of live time elapsed before pause, then the 5 s
+        // gap is stitched out: frame 2 at 0.06, NOT 5.06
+        assertEquals(listOf(0.0, 0.06), rec.xSeries)
+        assertEquals(0.06, rec.lastTimeSeconds, 1e-9)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -171,12 +183,15 @@ class PlotTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
         rec.updateConfig(listOf(chan("a", 0)), 10, 3)
+        var clock = 1_000_000_000L
+        rec.clockNanos = { clock }
         rec.start(10)
         repeat(5) {
             h.monitorData.value = listOf(it.toDouble())
+            clock += 100_000_000
             testScheduler.advanceUntilIdle() // StateFlow conflates; collect each frame
         }
-        assertEquals(0.5, rec.lastTimeSeconds, 1e-9) // full time kept, buffer trimmed
+        assertEquals(0.4, rec.lastTimeSeconds, 1e-9) // buffer trimmed to 3 frames
         assertEquals(listOf(3, 3), listOf(rec.series("a").size, rec.xSeries.size))
         assertEquals(listOf(2.0, 3.0, 4.0), rec.series("a"))
     }
@@ -186,16 +201,19 @@ class PlotTest {
     fun `pause stops capture and releases polling`() = runTest {
         val h = RecorderHarness()
         val rec = PlotRecorder(h.repository)
+        var clock = 1_000_000_000L
+        rec.clockNanos = { clock }
         rec.updateConfig(listOf(chan("a", 0)), 10, 100)
         rec.start(10)
         h.monitorData.value = listOf(1.0)
         testScheduler.advanceUntilIdle()
-        assertEquals(0.1, rec.lastTimeSeconds, 1e-9)
+        clock += 100_000_000
+        assertEquals(0.0, rec.lastTimeSeconds, 1e-9)
 
         rec.pause()
         h.monitorData.value = listOf(2.0) // no capture while paused
         testScheduler.advanceUntilIdle()
-        assertEquals(0.1, rec.lastTimeSeconds, 1e-9)
+        assertEquals(0.0, rec.lastTimeSeconds, 1e-9)
         assertEquals(listOf(1.0), rec.series("a"))
         verify(exactly = 1) { h.repository.releaseDataPolling(any()) }
     }

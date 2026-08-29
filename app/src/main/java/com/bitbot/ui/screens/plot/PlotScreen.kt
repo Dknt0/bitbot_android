@@ -279,6 +279,7 @@ fun PlotScreen(
                     versionFlow = viewModel.version,
                     horizonSpanX = uiState.horizonSpanX,
                     xsProvider = viewModel::xSeries,
+                    arrivalNanosProvider = viewModel::lastArrivalNanos,
                     seriesProvider = ::seriesProvider,
                     modifier = Modifier
                         .fillMaxSize()

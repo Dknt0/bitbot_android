@@ -65,7 +65,7 @@ class PlotLiveBackendTest {
         assertTrue("expected joint channels", registry.size > 50)
 
         val posChannel = registry.first { it.name == "actual_position" }
-        val kernelT = registry.first { it.name == "kernel_t(ms)" }
+        val periodsCount = registry.first { it.name == "periods_count" }
 
         // --- 2. real recorder ---
         val frameFlow = MutableStateFlow<List<Double>>(emptyList())
@@ -78,7 +78,7 @@ class PlotLiveBackendTest {
             every { releaseDataPolling(any()) } returns Unit
         }
         val recorder = PlotRecorder(repository)
-        recorder.updateConfig(listOf(posChannel, kernelT), 20, 20 * 60)
+        recorder.updateConfig(listOf(posChannel, periodsCount), 20, 20 * 60)
         recorder.start(20)
 
         // --- 3. live websocket polling at 20 Hz for ~4 s ---
@@ -113,15 +113,31 @@ class PlotLiveBackendTest {
         assertTrue("no frames captured", xs.size >= 40)
         assertTrue("x must be monotonic", xs.zipWithNext().all { (a, b) -> b > a })
 
-        // Frontend clock: every frame advances exactly 1/20 s regardless of
-        // the backend's internal loop rate
+        // x = real arrival instants: monotonic, mean spacing ~1/20 s
         val diffs = xs.zipWithNext().map { (a, b) -> b - a }
+        assertTrue("non-monotonic x", diffs.all { it > 0.0 })
+        val mean = (xs.last() - xs.first()) / (xs.size - 1)
+        assertTrue("mean spacing $mean far from 1/20 s", abs(mean - 0.05) < 0.02)
+        println("frames=%d, span=%.2fs (arrival clock, mean dt=%.3fs)".format(xs.size, recorder.lastTimeSeconds, mean))
+
+        // REGRESSION (user report): a channel tracking the backend's own clock
+        // (periods_count) must be a straight line against arrival time, even
+        // with bursty replies — bent data was the old fixed-tick artifact.
+        val counts = recorder.series(periodsCount.key)
+        val pts = xs.mapIndexed { i, t -> t to counts[i] }.filter { it.second.isFinite() }
+        val n = pts.size
+        val mt = pts.sumOf { it.first } / n
+        val my = pts.sumOf { it.second } / n
+        var sxx = 0.0; var sxy = 0.0
+        pts.forEach { (t, y) -> sxx += (t - mt) * (t - mt); sxy += (t - mt) * (y - my) }
+        val slope = sxy / sxx
+        val range = pts.last().second - pts.first().second
+        val maxResid = pts.maxOf { (t, y) -> abs(y - (my + slope * (t - mt))) }
+        println("periods_count: slope=%.0f/s, range=%d, max residual=%.0f (%.2f%% of range)".format(slope, range.toLong(), maxResid, maxResid / range * 100))
         assertTrue(
-            "spacing deviates from configured tick: ${diffs.distinct()}",
-            diffs.all { abs(it - 0.05) < 1e-9 }
+            "periods_count not linear vs arrival time (resid ${"%.1f".format(maxResid)} of range $range)",
+            maxResid < range * 0.02
         )
-        assertEquals(xs.size / 20.0, recorder.lastTimeSeconds, 0.02)
-        println("frames=%d, span=%.2fs (frontend clock @20Hz)".format(xs.size, recorder.lastTimeSeconds))
 
         val values = recorder.series(posChannel.key)
         val finite = values.count { it.isFinite() }
@@ -145,8 +161,8 @@ class PlotLiveBackendTest {
         }
 
         // --- 6. ASCII render (60s window) for visual inspection ---
+        asciiPlot("${periodsCount.group}.periods_count", recorder, periodsCount.key, 60)
         asciiPlot("hip ${posChannel.group}.actual_position", recorder, posChannel.key, 60)
-        asciiPlot("${kernelT.group}.kernel_t(ms)", recorder, kernelT.key, 60)
     }
 
     private fun asciiPlot(title: String, recorder: PlotRecorder, key: String, horizonSeconds: Int) {

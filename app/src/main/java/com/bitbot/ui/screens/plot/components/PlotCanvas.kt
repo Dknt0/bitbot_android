@@ -3,15 +3,13 @@ package com.bitbot.ui.screens.plot.components
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -334,6 +332,7 @@ fun PlotCanvas(
     versionFlow: StateFlow<Long>,
     horizonSpanX: Float,
     xsProvider: () -> List<Double>,
+    arrivalNanosProvider: () -> Long,
     seriesProvider: () -> List<PlotSeries>,
     modifier: Modifier = Modifier
 ) {
@@ -343,20 +342,20 @@ fun PlotCanvas(
     var viewWidth by remember { mutableStateOf(1f) }
     var viewHeight by remember { mutableStateOf(1f) }
 
-    // Follow mode: animate the right edge to the newest sample so the plot
-    // scrolls continuously between polls instead of stepping per update.
-    val followAnim = remember { Animatable(0f) }
-    LaunchedEffect(version, state.followX, horizonSpanX) {
-        if (state.followX) {
-            state.xSpan = maxOf(horizonSpanX, MIN_X_SPAN)
-            val target = xsProvider().lastOrNull()?.toFloat() ?: return@LaunchedEffect
-            val gap = target - followAnim.value
-            if (!followAnim.isRunning && gap > state.xSpan * 0.25f) {
-                followAnim.snapTo(target) // (re)engage: jump to the live edge
-            } else {
-                followAnim.animateTo(target, tween(120, easing = LinearEasing))
+    // Follow mode driven by the WALL CLOCK on every animation frame: the
+    // right edge advances at exactly 1 s/s (last sample time + elapsed since
+    // its arrival, extrapolation capped), independent of reply burstiness.
+    // Chasing per-sample targets instead made the scroll speed jitter.
+    LaunchedEffect(state.followX, horizonSpanX) {
+        while (state.followX) {
+            withFrameNanos { frameNanos ->
+                val lastX = xsProvider().lastOrNull() ?: return@withFrameNanos
+                val elapsed = (frameNanos - arrivalNanosProvider()) / 1e9f
+                val xEnd = (lastX + elapsed.coerceIn(0f, 0.2f)).toFloat()
+                if (xEnd != state.xEnd) state.xEnd = xEnd
+                val span = maxOf(horizonSpanX, MIN_X_SPAN)
+                if (span != state.xSpan) state.xSpan = span
             }
-            state.xEnd = followAnim.value
         }
     }
 
@@ -372,7 +371,7 @@ fun PlotCanvas(
             .pointerInput(state) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     if (pan.x != 0f) {
-                        if (state.followX) { state.followX = false; state.xEnd = followAnim.value }
+                        if (state.followX) state.followX = false
                         val perPx = state.xSpan / viewWidth
                         state.xEnd = (state.xEnd - pan.x * perPx).coerceAtLeast(0f)
                     }
@@ -385,7 +384,7 @@ fun PlotCanvas(
                         state.yMax = mid + half
                     }
                     if (zoom != 1f && zoom > 0f) {
-                        if (state.followX) { state.followX = false; state.xEnd = followAnim.value }
+                        if (state.followX) state.followX = false
                         // Zoom anchored at the pinch centroid (detectTransformGestures
                         // reports a uniform factor; apply it to both axes).
                         val cx = (state.xEnd - state.xSpan) + centroid.x / viewWidth * state.xSpan
@@ -406,8 +405,7 @@ fun PlotCanvas(
         // Read version so this draw invalidates on every new sample
         @Suppress("UNUSED_EXPRESSION") version
 
-        // Read the animated value so the draw invalidates every animation frame
-        val liveXEnd = if (state.followX) followAnim.value else state.xEnd
+        val liveXEnd = state.xEnd
         val series = seriesProvider()
         val xs = xsProvider()
         if (state.autoY && series.isNotEmpty()) {
