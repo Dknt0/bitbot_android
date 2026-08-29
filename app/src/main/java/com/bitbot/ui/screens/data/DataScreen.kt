@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,6 +64,14 @@ fun DataScreen(
     val uiState by viewModel.uiState.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     var userDisconnecting by remember { mutableStateOf(false) }
+
+    // Poll monitor data only while the Data panel is composed; the ViewModel
+    // survives panel switches, so gate explicitly (must run before the
+    // not-connected early return).
+    DisposableEffect(Unit) {
+        viewModel.setPanelActive(true)
+        onDispose { viewModel.setPanelActive(false) }
+    }
 
     if (connectionState !is ConnectionState.Connected && !userDisconnecting) {
         Box(

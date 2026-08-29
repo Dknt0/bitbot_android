@@ -50,12 +50,24 @@ class DataViewModel @Inject constructor(
     private var headers: HeadersResponseDto? = null
     private var pollHandle: PollingHandle? = null
 
-    init {
-        // Acquire once for this panel's lifetime; the shared poll loop handles
-        // reconnects itself. 10 Hz table updates regardless of the poll rate
-        // (the plot recorder may poll faster and shares the same frames).
-        pollHandle = repository.acquireDataPolling(rateHz = 10)
+    /**
+     * Poll only while the Data panel is composed — the ViewModel outlives
+     * panel switches (nav-entry scoped) and zombie entries would otherwise
+     * keep the shared request_data loop running forever. The loop itself
+     * handles reconnects; 10 Hz table updates regardless of the poll rate
+     * (the plot recorder may poll faster and shares the same frames).
+     */
+    fun setPanelActive(active: Boolean) {
+        if (active == (pollHandle != null)) return
+        if (active) {
+            pollHandle = repository.acquireDataPolling(rateHz = 10)
+        } else {
+            pollHandle?.let { repository.releaseDataPolling(it) }
+            pollHandle = null
+        }
+    }
 
+    init {
         // Fetch headers from HTTP API
         viewModelScope.launch {
             repository.fetchHeaders()

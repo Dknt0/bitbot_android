@@ -32,9 +32,24 @@ fun NavGraph(
     ) {
         composable(Screen.Home.route) {
             HomeScreen(
-                onNavigateToPilot = { navController.navigate(Screen.PanelHost.createRoute("PILOT")) },
-                onNavigateToData = { navController.navigate(Screen.PanelHost.createRoute("DATA")) },
-                onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                onNavigateToPilot = {
+                    // launchSingleTop: a double-tap must not stack a second
+                    // panel entry — each entry owns ViewModels (velocity loop,
+                    // polling) that only stop when the entry is popped.
+                    navController.navigate(Screen.PanelHost.createRoute("PILOT")) {
+                        launchSingleTop = true
+                    }
+                },
+                onNavigateToData = {
+                    navController.navigate(Screen.PanelHost.createRoute("DATA")) {
+                        launchSingleTop = true
+                    }
+                },
+                onNavigateToSettings = {
+                    navController.navigate(Screen.Settings.route) {
+                        launchSingleTop = true
+                    }
+                }
             )
         }
 
@@ -46,7 +61,11 @@ fun NavGraph(
             val initialPanel = try { PanelType.valueOf(initialPanelName) } catch (_: Exception) { PanelType.PILOT }
             PanelHostScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToButtonEditor = { navController.navigate(Screen.ButtonEditor.route) },
+                onNavigateToButtonEditor = {
+                    navController.navigate(Screen.ButtonEditor.route) {
+                        launchSingleTop = true
+                    }
+                },
                 initialPanel = initialPanel
             )
         }

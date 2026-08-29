@@ -165,7 +165,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - **Start button** acts on release (kernel `start` only fires on key Up); all buttons send Down+Up pairs
 - **Data panel** fetches headers via HTTP (`/monitor/headers`) and acquires data polling at 10 Hz in `DataViewModel` init (released in onCleared); the shared poll loop handles reconnects internally, and `monitorData` is consumed through `.sample(100)` to keep table updates at 10 Hz.
 - **PanelSwitcher**: Tap-to-toggle FAB at bottom-left, switches between Pilot and Data panels. Uses `AnimatedVisibility` with horizontal slide.
-- **PanelHostScreen**: Wraps PilotScreen and DataScreen as switchable composables. Route: `panel_host/{initialPanel}`.
+- **PanelHostScreen**: Wraps PilotScreen, DataScreen and PlotScreen as switchable composables. Route: `panel_host/{initialPanel}`. All navigations use `launchSingleTop` — a double-tap must never stack duplicate panel entries, each of which owns ViewModels (velocity loop / polling) that only stop when popped.
+- **Data panel polling** is gated like the pilot loop: `DataViewModel.setPanelActive()` acquires/releases the shared poll handle on composition, so covered or zombie entries never keep `request_data` running.
 - **Data table**: LazyColumn with stickyHeader, fixed column widths (Name=110dp, Values=64dp, Mode=28dp), shared horizontal ScrollState for sync scrolling. Kernel stats bar shows deduplicated labels in top bar.
 - **HomeViewModel** observes DataStore as a `Flow` (not `.first()`) so settings changes from Settings screen are reflected immediately.
 - **fetchHeaders()** uses `withContext(Dispatchers.IO)` to avoid `NetworkOnMainThreadException` when called from `viewModelScope` (which uses `Dispatchers.Main`).
